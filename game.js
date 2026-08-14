@@ -1,6 +1,25 @@
 import * as THREE from 'three';
 
 // =====================================================================
+// 오디오 샘플 출처 (모두 CC0 / Public Domain — freesound.org)
+// 각 원본에서 첫 타격/최대 피크 구간만 잘라 모노 정규화 WAV로 가공함.
+//  - assets/hit-driver.wav  "Driver 1.wav" — cheesechrisp
+//      https://freesound.org/people/cheesechrisp/sounds/620196/
+//  - assets/hit-shot.wav    "Golf shot.wav" — MioMeg
+//      https://freesound.org/people/MioMeg/sounds/707022/
+//  - assets/hit-owi.wav     "Golf ball getting hit OWI.wav" — Jarryd28
+//      https://freesound.org/people/Jarryd28/sounds/655867/
+//  - assets/cup.wav         "Golf ball in hole.wav" — Scottrex05
+//      https://freesound.org/people/Scottrex05/sounds/593482/
+//  - assets/land-grass.wav  "Tennis Bounce Ball on Grass" — jamesdrake89
+//      https://freesound.org/people/jamesdrake89/sounds/662258/
+//  - assets/land-grass2.wav "Bouncy Ball Bouncing on Dry Grass" — NathanaelBray
+//      https://freesound.org/people/NathanaelBray/sounds/650976/
+//  - assets/land-sand.wav   "Hard Impact on Sand" — Elements-Library
+//      https://freesound.org/people/Elements-Library/sounds/683788/
+// =====================================================================
+
+// =====================================================================
 // 물리 코어 — 실측 단위 (렌더와 완전 분리, 헤드리스 테스트 공용)
 // =====================================================================
 // 출처:
@@ -909,12 +928,65 @@ const SND = (() => {
            nodesCreated: () => created };
 })();
 
+// ---------- 샘플 뱅크 (CC0 녹음 — 트랜지언트 계열은 실녹음, 지속음은 합성 유지) ----------
+const SAMPLES = {
+  impactHard: ['assets/hit-driver.wav'],
+  impactSoft: ['assets/hit-shot.wav', 'assets/hit-owi.wav'],
+  landGrass:  ['assets/land-grass.wav', 'assets/land-grass2.wav'],
+  landSand:   ['assets/land-sand.wav'],
+  cup:        ['assets/cup.wav'],
+};
+const bank = { ready: false, buf: {}, rr: {} };   // rr: 카테고리별 라운드로빈 인덱스
+
+async function loadSamples(c) {
+  if (bank.loading || bank.ready) return;
+  bank.loading = true;
+  try {
+    for (const [cat, urls] of Object.entries(SAMPLES)) {
+      const bufs = [];
+      for (const u of urls) {
+        const ab = await (await fetch(u)).arrayBuffer();
+        bufs.push(await c.decodeAudioData(ab));
+      }
+      bank.buf[cat] = bufs;
+      bank.rr[cat] = 0;
+    }
+    bank.ready = true;
+  } catch (e) {
+    // 로드 실패(오프라인 등) → 합성 폴백 유지
+    bank.ready = false;
+  }
+  bank.loading = false;
+}
+
 // ---------- 라이브 사운드 엔진 ----------
 const sfx = (() => {
   const SPEED_OF_SOUND = 343, MAX_VOICES = 12;
   let c = null, master = null, bus = null, muted = false;
   let air = null, roll = null, lfo = null, lfoGain = null;
   let live = [];   // 재생 중인 원샷 게인 노드 {g, end}
+
+  // 샘플 원샷 재생: 라운드로빈 + 피치 ±4% / 게인 ±2dB 랜덤 (반복 청취 대응)
+  function samplePlay(cat, t, { gain = 1, rate = 1, lowpass = 0 } = {}) {
+    const bufs = bank.buf[cat];
+    if (!bufs || !bufs.length) return null;
+    const i = bank.rr[cat] % bufs.length;
+    bank.rr[cat]++;
+    const s = c.createBufferSource();
+    s.buffer = bufs[i];
+    s.playbackRate.value = rate * (0.96 + Math.random() * 0.08);
+    const g = c.createGain();
+    g.gain.value = gain * Math.pow(10, (Math.random() * 4 - 2) / 20);
+    if (lowpass) {
+      const f = c.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.value = lowpass;
+      s.connect(f).connect(g).connect(bus);
+    } else {
+      s.connect(g).connect(bus);
+    }
+    s.start(t);
+    return g;
+  }
 
   function ac() {
     if (!c) {
@@ -941,6 +1013,8 @@ const sfx = (() => {
       lfoGain = c.createGain(); lfoGain.gain.value = 0;
       lfo.connect(lfoGain).connect(air.gain.gain);
       lfo.start();
+
+      loadSamples(c);   // 샘플은 백그라운드 로드 — 완료 전엔 합성 폴백
     }
     if (c.state === 'suspended') c.resume();
     return c;
@@ -972,20 +1046,55 @@ const sfx = (() => {
     },
     tap() { play((cc, d, t) => [SND.ping(cc, d, t, { f: 660, dur: 0.06, vol: 0.08, type: 'square' })]); },
     takeback() { play((cc, d, t) => [SND.ping(cc, d, t, { f: 95, dur: 0.2, vol: 0.05, type: 'sawtooth', slideTo: 70 })]); },
-    impactHit(ballSpd, pure) { play((cc, d, t) => SND.impact(cc, d, t, ballSpd, pure)); },
-    bounce(spd, surfName, idx) { play((cc, d, t) => SND.land(cc, d, t, surfName, spd, idx)); },
+    // 타격음 — 벨로시티 레이어: 하드(드라이버)/소프트 샘플을 속도로 선택·크로스페이드.
+    // 볼 스피드 → 재생 속도(밝기)·게인에도 매핑. 샘플 미로드 시 합성 폴백.
+    impactHit(ballSpd, pure) {
+      const k = Math.min(Math.max(ballSpd / 60, 0.2), 1);
+      if (bank.ready) {
+        play((cc, d, t) => {
+          const out = [];
+          const xf = Math.min(Math.max((k - 0.45) / 0.2, 0), 1);   // 0=소프트, 1=하드
+          const rate = 0.97 + 0.08 * k;
+          const lp = pure ? 0 : 2400;                              // 미스히트는 어둡게
+          if (xf > 0)  out.push(samplePlay('impactHard', t, { gain: (0.55 + 0.45 * k) * xf, rate, lowpass: lp }));
+          if (xf < 1)  out.push(samplePlay('impactSoft', t, { gain: (0.55 + 0.45 * k) * (1 - xf), rate, lowpass: lp }));
+          if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.14, f0: 500, f1: 260, q: 1.2 }));
+          return out.filter(Boolean);
+        });
+      } else {
+        play((cc, d, t) => SND.impact(cc, d, t, ballSpd, pure));
+      }
+    },
+    // 착지음 — 노면별 실녹음 (잔디/모래), 바운스 횟수마다 감쇠·둔화 (상대 레벨 −6 dB)
+    bounce(spd, surfName, idx) {
+      const k = Math.min(spd / 18, 1) * Math.pow(0.72, idx);
+      if (k < 0.04) return;
+      if (bank.ready) {
+        play((cc, d, t) => {
+          const cat = surfName === 'sand' ? 'landSand' : 'landGrass';
+          const dull = surfName === 'rough' ? 1800 : (idx > 0 ? 3500 : 0);
+          return [samplePlay(cat, t, { gain: 0.5 * k, rate: 0.94 + 0.1 * k, lowpass: dull })].filter(Boolean);
+        });
+      } else {
+        play((cc, d, t) => SND.land(cc, d, t, surfName, spd, idx));
+      }
+    },
     lipout() {
       play((cc, d, t) => [
         SND.ping(cc, d, t, { f: 880, dur: 0.05, vol: 0.14, type: 'triangle' }),
         SND.ping(cc, d, t + 0.06, { f: 660, dur: 0.07, vol: 0.11, type: 'triangle' }),
       ]);
     },
+    // 홀인 — 실녹음 컵 소리 + (보상 신호로) 낮은 음량의 아르페지오 유지
     holeIn() {
-      play((cc, d, t) => [
-        SND.burst(cc, d, t, { dur: 0.12, vol: 0.2, f0: 1200, f1: 500, q: 2 }),
-        ...[523, 659, 784, 1047].map((f, i) =>
-          SND.ping(cc, d, t + 0.12 + i * 0.11, { f, dur: 0.18, vol: 0.16, type: 'triangle' })),
-      ]);
+      play((cc, d, t) => {
+        const out = [];
+        if (bank.ready) out.push(samplePlay('cup', t, { gain: 0.8 }));
+        else out.push(SND.burst(cc, d, t, { dur: 0.12, vol: 0.2, f0: 1200, f1: 500, q: 2 }));
+        [523, 659, 784, 1047].forEach((f, i) =>
+          out.push(SND.ping(cc, d, t + 0.3 + i * 0.11, { f, dur: 0.18, vol: 0.1, type: 'triangle' })));
+        return out.filter(Boolean);
+      });
     },
     miss() { play((cc, d, t) => [SND.ping(cc, d, t, { f: 220, dur: 0.15, vol: 0.07, slideTo: 180 })]); },
 
@@ -998,7 +1107,7 @@ const sfx = (() => {
       const dop = SPEED_OF_SOUND / (SPEED_OF_SOUND + Math.max(Math.min(radialV, 150), -150));
       const f = Math.min(Math.max((400 + 12 * spd) * dop, 120), 9000);
       air.filt.frequency.setTargetAtTime(f, t, 0.03);
-      const g = Math.min(spd * spd / 3600, 1) * SND.distAtten(dist) * 0.55;
+      const g = Math.min(spd * spd / 3600, 1) * SND.distAtten(dist) * 0.25;   // 타격 대비 약 −12 dB
       air.gain.gain.setTargetAtTime(g, t, 0.03);
       lfo.frequency.setTargetAtTime(8 + 6 * spinRatio, t, 0.05);
       lfoGain.gain.setTargetAtTime(g * 0.35 * spinRatio, t, 0.05);
@@ -1615,14 +1724,22 @@ async function audioTest() {
   }, 0.8);
 
   const atten20 = SND.distAtten(20), atten100 = SND.distAtten(100);
+  // 샘플 뱅크 상태 (라이브 컨텍스트 기준) — 로드 실패 시 합성 폴백이 동작해야 함
+  const sampleStatus = {};
+  for (const cat of Object.keys(SAMPLES)) {
+    const bufs = bank.buf[cat] || [];
+    sampleStatus[cat] = bufs.map(b => ({ durMs: Math.round(b.duration * 1000), ch: b.numberOfChannels, sr: b.sampleRate }));
+  }
   return {
     impactFast, impactMiss, green, rough, sand, holeIn,
+    samples: { ready: bank.ready, status: sampleStatus },
     checks: {
       noClipping: [impactFast, impactMiss, green, rough, sand, holeIn].every(r => !r.clipping),
       impactDurInRange: impactFast.durMs >= 60 && impactFast.durMs <= 120,
       centroidOrder_sand_gt_rough_gt_green: sand.centroidHz > rough.centroidHz && rough.centroidHz > green.centroidHz,
       flightAttenRatio: +(atten20 / atten100).toFixed(1),
       flightAttenOver10x: atten20 / atten100 >= 10,
+      samplesLoaded: bank.ready && Object.values(sampleStatus).every(a => a.length > 0),
     },
   };
 }
@@ -1630,7 +1747,7 @@ async function audioTest() {
 // 헤드리스 검증 훅 (벤치마크·밸런스 스윕·오디오)
 window.__golf = {
   bench, aceSweep, benchCarry, gestureTest, audioTest, makeSim, launch, physStep,
-  buildRound, holeScore, store, dayKey, weekKey, monthKey, state, sim, SND, sfx,
+  buildRound, holeScore, store, dayKey, weekKey, monthKey, state, sim, SND, sfx, bank,
   SUB, HEAD_MIN, HEAD_MAX, LOFT_MIN, LOFT_MAX, HOLES, DIST_MIN, DIST_MAX,
 };
 
