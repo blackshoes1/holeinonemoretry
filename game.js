@@ -816,7 +816,9 @@ const SND = (() => {
   function noiseBuf(c) {
     let b = noiseCache.get(c);
     if (!b) {
-      b = c.createBuffer(1, Math.floor(c.sampleRate * 0.5), c.sampleRate);
+      // 4초 — 지속음 보이스가 이 버퍼를 무한 반복한다. 짧으면 반복 주기가 귀에 잡혀
+      // 바람이 아니라 지직거리는 노이즈로 들린다.
+      b = c.createBuffer(1, Math.floor(c.sampleRate * 4), c.sampleRate);
       const d = b.getChannelData(0);
       let s = 22222;   // 결정론적 노이즈 (렌더 검증 재현성)
       for (let i = 0; i < d.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; d[i] = s / 0x3fffffff - 1; }
@@ -1115,9 +1117,10 @@ const sfx = (() => {
     ambient(windSpd) {
       if (!c || muted) return;
       const t = c.currentTime;
-      const gust = 1 + 0.35 * Math.sin(t * 0.31) * Math.sin(t * 0.13);
-      amb.filt.frequency.setTargetAtTime(360 + 26 * windSpd, t, 0.6);
-      amb.gain.gain.setTargetAtTime((0.018 + 0.011 * windSpd) * gust, t, 0.6);
+      // 서로 어긋나는 두 주기로 세기와 음색을 함께 흔든다 — 고정된 노이즈는 바람으로 안 들린다
+      const gust = 1 + 0.45 * Math.sin(t * 0.23) * Math.sin(t * 0.09);
+      amb.filt.frequency.setTargetAtTime((300 + 22 * windSpd) * (1 + 0.3 * Math.sin(t * 0.17)), t, 0.8);
+      amb.gain.gain.setTargetAtTime((0.006 + 0.0035 * windSpd) * gust, t, 0.8);   // 약 −33 dBFS
     },
     // 구름음
     rolling(spd, on) {
