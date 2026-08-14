@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Hole in One — One More Try</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #9bdcf7; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Segoe UI", sans-serif; color: #fff;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { display: block; touch-action: none; }
+
+  #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; }
+
+  .panel {
+    position: absolute; background: rgba(27,42,30,.55); border: 2px solid rgba(255,255,255,.25);
+    border-radius: 14px; padding: 8px 12px; font-size: clamp(12px, 3.2vw, 14px); line-height: 1.6;
+    text-shadow: 0 2px 0 rgba(0,0,0,.35);
+  }
+  #info { top: max(12px, env(safe-area-inset-top)); left: 12px; }
+  #score { top: max(12px, env(safe-area-inset-top)); right: 12px; text-align: right; }
+  #info b, #score b { font-size: clamp(15px, 4.4vw, 18px); }
+
+  #retry, #sound, #recBtn {
+    position: absolute; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%);
+    width: 40px; height: 40px; border-radius: 50%; background: rgba(27,42,30,.55);
+    border: 2px solid rgba(255,255,255,.25); display: grid; place-items: center;
+    font-size: 19px; pointer-events: auto; cursor: pointer;
+  }
+  #retry  { left: calc(50% - 46px); }
+  #sound  { left: 50%; font-size: 17px; }
+  #recBtn { left: calc(50% + 46px); font-size: 17px; }
+
+  #records {
+    position: absolute; inset: 0; display: none; place-items: center;
+    background: rgba(10,18,12,.55); pointer-events: auto;
+  }
+  #records.on { display: grid; }
+  #records .card {
+    background: rgba(27,42,30,.92); border: 3px solid rgba(255,255,255,.3);
+    border-radius: 18px; padding: 20px 22px; min-width: min(300px, 84vw); max-width: 84vw;
+    font-size: clamp(13px, 3.6vw, 15px); line-height: 1.7;
+  }
+  #records h3 { font-size: 17px; margin-bottom: 12px; letter-spacing: .02em; }
+  #records table { width: 100%; border-collapse: collapse; }
+  #records td { padding: 4px 0; }
+  #records td:last-child { text-align: right; font-weight: 700; }
+  #records .sub { margin-top: 12px; font-size: 12px; opacity: .7; line-height: 1.6; }
+  #records .close { margin-top: 14px; text-align: center; font-size: 13px; opacity: .8; }
+
+  .sum { border-collapse: collapse; margin: 10px auto 4px; font-size: 13px; }
+  .sum td { padding: 2px 7px; }
+  .sum td:first-child { opacity: .75; }
+  .sum td:last-child { font-weight: 700; text-align: right; }
+  .sum .ace { color: #ffd23f; }
+
+  #bars { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); width: min(320px, 86vw); }
+  .bar-wrap { margin-bottom: 10px; display: none; }
+  .bar-wrap.on { display: block; }
+  .bar-label { font-size: 12px; letter-spacing: .08em; margin-bottom: 4px; opacity: .9; }
+  .bar {
+    position: relative; height: 22px; border-radius: 11px; overflow: hidden;
+    background: rgba(27,42,30,.6); border: 2px solid rgba(255,255,255,.3);
+  }
+  .bar > i { position: absolute; inset: 0 auto 0 0; width: 0%; display: block; }
+  #powerBar > i { background: linear-gradient(90deg, #6fd35f, #ffd23f 58%, #e8443a); }
+  #loftBar  > i { background: linear-gradient(90deg, #9bdcf7, #5b8ef0); }
+  .bar-val { position: absolute; right: 7px; top: 0; font-size: 12px; line-height: 18px; }
+
+  #msg {
+    position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%);
+    text-align: center; font-size: clamp(13px, 3.6vw, 15px); line-height: 1.7; max-width: 86vw;
+    background: rgba(27,42,30,.62); border: 3px solid rgba(255,255,255,.3);
+    border-radius: 18px; padding: 18px 26px; display: none;
+  }
+  #msg.on { display: block; }
+  #msg .big { font-size: clamp(24px, 7vw, 32px); font-weight: 800; display: block; margin-bottom: 6px; letter-spacing: -.01em; }
+  #msg .hint { font-size: 13px; opacity: .8; }
+
+  #prompt {
+    position: absolute; left: 50%; bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px));
+    transform: translateX(-50%); white-space: nowrap;
+    font-size: clamp(13px, 3.6vw, 14px); background: rgba(27,42,30,.55); border-radius: 10px; padding: 8px 16px;
+  }
+  #keys {
+    position: absolute; left: 12px; bottom: 12px; font-size: 12px; opacity: .8;
+    background: rgba(27,42,30,.45); border-radius: 10px; padding: 8px 12px; line-height: 1.7;
+  }
+  #impactLine {
+    position: absolute; height: 0; width: 140px; margin-left: -70px;
+    border-top: 2px dashed rgba(255,255,255,.75); display: none; pointer-events: none;
+  }
+  #impactLine::after {
+    content: ''; position: absolute; left: 50%; top: -5px; width: 8px; height: 8px;
+    margin-left: -4px; border-radius: 50%; background: #fff;
+  }
+  #impactLine.on { display: block; }
+  #impactHint {
+    position: absolute; display: none; transform: translate(-50%, -140%);
+    font-size: 24px; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,.4); pointer-events: none;
+  }
+  #impactHint.on { display: block; }
+
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; font-size: 16px; background: #9bdcf7; }
+
+  @media (pointer: coarse), (max-width: 860px) { #keys { display: none; } }
+</style>
+</head>
+<body>
+<div id="loading">코스를 준비하는 중…</div>
+
+<div id="hud">
+  <div class="panel" id="info"></div>
+  <div class="panel" id="score"></div>
+  <div id="retry">↻</div>
+  <div id="sound">🔊</div>
+  <div id="recBtn">📊</div>
+
+  <div id="records"><div class="card" id="recCard"></div></div>
+
+  <div id="bars">
+    <div class="bar-wrap" id="powerWrap">
+      <div class="bar-label" id="powerLabel">스윙 스피드</div>
+      <div class="bar" id="powerBar"><i></i><span class="bar-val"></span></div>
+    </div>
+    <div class="bar-wrap" id="loftWrap">
+      <div class="bar-label" id="loftLabel">로프트</div>
+      <div class="bar" id="loftBar"><i></i><span class="bar-val"></span></div>
+    </div>
+  </div>
+
+  <div id="impactLine"></div>
+  <div id="impactHint"></div>
+  <div id="msg"></div>
+  <div id="prompt"></div>
+  <div id="keys">
+    9홀 홀인원 챌린지 · 홀마다 1샷, 핀에 가까울수록 고득점<br>
+    ← → / 드래그 : 조준 &nbsp;·&nbsp; 클릭 → 아래로 당겼다 위로 : 스윙<br>
+    SPACE : 준비/계속 &nbsp;·&nbsp; R : 라운드 처음부터
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module" src="game.js"></script>
+</body>
+</html>
