@@ -911,9 +911,9 @@ const SND = (() => {
   }
 
   // ---- 지속음 보이스: 노드를 한 번만 만들고 이후엔 파라미터만 갱신 ----
-  function loopVoice(c, dest, f0, q) {
+  function loopVoice(c, dest, f0, q, type = 'bandpass') {
     const s = c.createBufferSource(); s.buffer = noiseBuf(c); s.loop = true;
-    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = f0; f.Q.value = q;
+    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = f0; f.Q.value = q;
     const g = c.createGain(); g.gain.value = 0;
     s.connect(f).connect(g).connect(dest);
     s.start(0);
@@ -921,10 +921,12 @@ const SND = (() => {
     return { src: s, filt: f, gain: g };
   }
 
-  // 거리 감쇠 (역제곱 근사) — 비행음 게인에 곱한다
-  function distAtten(d) { return 1 / (1 + Math.pow(d / 25, 2)); }
+  // 근접장 감쇠 — 공이 청자 곁을 스칠 때만 들린다. 20 m에서 −21 dB, 그 밖은 사실상 무음.
+  function nearField(d) { return 1 / (1 + Math.pow(d / 6, 2)); }
+  // 거리에 따른 고역 흡수 — 멀수록 둔탁해진다 (컷오프에 곱한다)
+  function airAbsorb(d) { return 1 / (1 + d / 25); }
 
-  return { noiseBuf, ir, burst, ping, impact, land, loopVoice, distAtten,
+  return { noiseBuf, ir, burst, ping, impact, land, loopVoice, nearField, airAbsorb,
            nodesCreated: () => created };
 })();
 
@@ -963,7 +965,7 @@ async function loadSamples(c) {
 const sfx = (() => {
   const SPEED_OF_SOUND = 343, MAX_VOICES = 12;
   let c = null, master = null, bus = null, muted = false;
-  let air = null, roll = null, lfo = null, lfoGain = null;
+  let air = null, roll = null, amb = null;
   let live = [];   // 재생 중인 원샷 게인 노드 {g, end}
 
   // 샘플 원샷 재생: 라운드로빈 + 피치 ±4% / 게인 ±2dB 랜덤 (반복 청취 대응)
@@ -1005,14 +1007,10 @@ const sfx = (() => {
       bus.connect(dry).connect(master);
       bus.connect(wet).connect(conv).connect(master);
 
-      // 지속음 2개 (비행 공기음 / 구름음) — 이후 노드 생성 없음
-      air  = SND.loopVoice(c, master, 700, 0.8);
+      // 지속음 3개 (통과음 / 구름음 / 필드 앰비언스) — 이후 노드 생성 없음
+      air  = SND.loopVoice(c, master, 3000, 0.3, 'lowpass');
       roll = SND.loopVoice(c, master, 400, 1.0);
-      // 스핀 트레몰로: LFO가 비행음 게인에 가산된다
-      lfo = c.createOscillator(); lfo.frequency.value = 10;
-      lfoGain = c.createGain(); lfoGain.gain.value = 0;
-      lfo.connect(lfoGain).connect(air.gain.gain);
-      lfo.start();
+      amb  = SND.loopVoice(c, master, 480, 0.2, 'lowpass');
 
       loadSamples(c);   // 샘플은 백그라운드 로드 — 완료 전엔 합성 폴백
     }
@@ -1030,10 +1028,11 @@ const sfx = (() => {
       try { old.g.gain.cancelScheduledValues(now); old.g.gain.setTargetAtTime(0, now, 0.01); } catch {}
     }
   }
-  function play(fn) {
+  // delay = 음속 전파 지연(초). 먼 곳의 사건일수록 늦게 들린다.
+  function play(fn, delay = 0) {
     if (muted) return;
     const cc = ac();
-    register(fn(cc, bus, cc.currentTime + 0.005) || []);
+    register(fn(cc, bus, cc.currentTime + 0.005 + delay) || []);
   }
 
   return {
@@ -1066,7 +1065,7 @@ const sfx = (() => {
       }
     },
     // 착지음 — 노면별 실녹음 (잔디/모래), 바운스 횟수마다 감쇠·둔화 (상대 레벨 −6 dB)
-    bounce(spd, surfName, idx) {
+    bounce(spd, surfName, idx, delay = 0) {
       const k = Math.min(spd / 18, 1) * Math.pow(0.72, idx);
       if (k < 0.04) return;
       if (bank.ready) {
@@ -1074,19 +1073,19 @@ const sfx = (() => {
           const cat = surfName === 'sand' ? 'landSand' : 'landGrass';
           const dull = surfName === 'rough' ? 1800 : (idx > 0 ? 3500 : 0);
           return [samplePlay(cat, t, { gain: 0.5 * k, rate: 0.94 + 0.1 * k, lowpass: dull })].filter(Boolean);
-        });
+        }, delay);
       } else {
-        play((cc, d, t) => SND.land(cc, d, t, surfName, spd, idx));
+        play((cc, d, t) => SND.land(cc, d, t, surfName, spd, idx), delay);
       }
     },
-    lipout() {
+    lipout(delay = 0) {
       play((cc, d, t) => [
         SND.ping(cc, d, t, { f: 880, dur: 0.05, vol: 0.14, type: 'triangle' }),
         SND.ping(cc, d, t + 0.06, { f: 660, dur: 0.07, vol: 0.11, type: 'triangle' }),
-      ]);
+      ], delay);
     },
     // 홀인 — 실녹음 컵 소리 + (보상 신호로) 낮은 음량의 아르페지오 유지
-    holeIn() {
+    holeIn(delay = 0) {
       play((cc, d, t) => {
         const out = [];
         if (bank.ready) out.push(samplePlay('cup', t, { gain: 0.8 }));
@@ -1094,23 +1093,31 @@ const sfx = (() => {
         [523, 659, 784, 1047].forEach((f, i) =>
           out.push(SND.ping(cc, d, t + 0.3 + i * 0.11, { f, dur: 0.18, vol: 0.1, type: 'triangle' })));
         return out.filter(Boolean);
-      });
+      }, delay);
     },
     miss() { play((cc, d, t) => [SND.ping(cc, d, t, { f: 220, dur: 0.15, vol: 0.07, slideTo: 180 })]); },
 
-    // 비행 공기음 — 프레임마다 파라미터만 갱신 (노드 생성 0)
-    // radialV > 0 = 멀어짐 → 도플러 하강
-    flight(spd, dist, radialV, spinRatio, on) {
+    // 통과음 — 공이 청자 곁을 스치는 동안에만 들린다.
+    // 임팩트 직후 0.3초 남짓이면 20 m를 벗어나 사실상 무음이 된다(실제 필드와 동일).
+    // 프레임마다 파라미터만 갱신 (노드 생성 0). radialV > 0 = 멀어짐 → 도플러 하강.
+    flight(spd, dist, radialV, on) {
       if (!c || muted) return;
       const t = c.currentTime;
-      if (!on) { air.gain.gain.setTargetAtTime(0, t, 0.02); lfoGain.gain.setTargetAtTime(0, t, 0.02); return; }
+      if (!on) { air.gain.gain.setTargetAtTime(0, t, 0.02); return; }
       const dop = SPEED_OF_SOUND / (SPEED_OF_SOUND + Math.max(Math.min(radialV, 150), -150));
-      const f = Math.min(Math.max((400 + 12 * spd) * dop, 120), 9000);
+      // 광대역 난류 히스: 멀어질수록 고역이 깎여 둔탁해진다
+      const f = Math.min(Math.max((2200 + 22 * spd) * dop * SND.airAbsorb(dist), 300), 12000);
       air.filt.frequency.setTargetAtTime(f, t, 0.03);
-      const g = Math.min(spd * spd / 3600, 1) * SND.distAtten(dist) * 0.25;   // 타격 대비 약 −12 dB
-      air.gain.gain.setTargetAtTime(g, t, 0.03);
-      lfo.frequency.setTargetAtTime(8 + 6 * spinRatio, t, 0.05);
-      lfoGain.gain.setTargetAtTime(g * 0.35 * spinRatio, t, 0.05);
+      const g = Math.min(spd * spd / 3600, 1) * SND.nearField(dist) * 0.32;
+      air.gain.gain.setTargetAtTime(g < 0.004 ? 0 : g, t, 0.03);
+    },
+    // 필드 앰비언스 — 실제 바람 세기로 구동. 비행음이 빠진 정적을 필드로 읽히게 한다.
+    ambient(windSpd) {
+      if (!c || muted) return;
+      const t = c.currentTime;
+      const gust = 1 + 0.35 * Math.sin(t * 0.31) * Math.sin(t * 0.13);
+      amb.filt.frequency.setTargetAtTime(360 + 26 * windSpd, t, 0.6);
+      amb.gain.gain.setTargetAtTime((0.018 + 0.011 * windSpd) * gust, t, 0.6);
     },
     // 구름음
     rolling(spd, on) {
@@ -1120,12 +1127,12 @@ const sfx = (() => {
       roll.filt.frequency.setTargetAtTime(300 + 60 * Math.min(spd, 8), t, 0.05);
       roll.gain.gain.setTargetAtTime(Math.min(spd / 12, 1) * 0.11, t, 0.05);
     },
+    // 앰비언스는 끄지 않는다 — 샷 사이의 정적이 "음소거"가 아니라 필드로 들려야 한다
     silence() {
       if (!c) return;
       const t = c.currentTime;
       air.gain.gain.setTargetAtTime(0, t, 0.02);
       roll.gain.gain.setTargetAtTime(0, t, 0.02);
-      lfoGain.gain.setTargetAtTime(0, t, 0.02);
     },
   };
 })();
@@ -1505,22 +1512,27 @@ function updateHud() {
 
 // ---------- 루프 ----------
 let last = performance.now();
+// 청자는 카메라가 아니라 티에 선 플레이어다. 카메라는 공을 쫓지만(연출) 귀는 티에 남는다.
+// 이 구분이 없으면 추격 카메라 때문에 공이 늘 13 m 앞에 있는 셈이 되어 통과음이 영원히 꺼지지 않는다.
+const EAR_Y = 1.6;
+function listenerDist(x, y, z) { return Math.hypot(x, y - EAR_Y, z); }
+// 음속 전파 지연 — 130 m 지점의 착지음은 약 0.38초 뒤에 들린다
+function propDelay(x, y, z) { return listenerDist(x, y, z) / 343; }
+
 function impactFx(x, z, vy, surfName) {
   fx.impact(x, z, vy);
-  sfx.bounce(Math.abs(vy), surfName, state.bounceCount++);
+  sfx.bounce(Math.abs(vy), surfName, state.bounceCount++, propDelay(x, 0, z));
 }
 
-// 비행 공기음 / 구름음 파라미터 갱신 — 노드를 만들지 않고 AudioParam만 건드린다
-const _camToBall = new THREE.Vector3();
+// 통과음 / 구름음 / 앰비언스 파라미터 갱신 — 노드를 만들지 않고 AudioParam만 건드린다
 function updateFlightAudio() {
-  if (state.phase !== PHASE.FLY) { sfx.flight(0, 0, 0, 0, false); sfx.rolling(0, false); return; }
+  sfx.ambient(Math.hypot(sim.windX, sim.windZ));   // 앰비언스는 항상 살아 있다
+  if (state.phase !== PHASE.FLY) { sfx.flight(0, 0, 0, false); sfx.rolling(0, false); return; }
   const spd = Math.hypot(sim.vx, sim.vy, sim.vz);
-  _camToBall.set(sim.px, sim.py, sim.pz).sub(camera.position);
-  const dist = Math.max(_camToBall.length(), 0.001);
-  // 시선 방향 상대속도 (양수 = 멀어짐)
-  const radialV = (sim.vx * _camToBall.x + sim.vy * _camToBall.y + sim.vz * _camToBall.z) / dist;
-  const spinRatio = Math.min(sim.spin * R_BALL / Math.max(spd, 1), 1);
-  sfx.flight(spd, dist, radialV, spinRatio, !sim.grounded);
+  const dist = Math.max(listenerDist(sim.px, sim.py, sim.pz), 0.001);
+  // 티 기준 상대속도 (양수 = 멀어짐) → 도플러 하강
+  const radialV = (sim.vx * sim.px + sim.vy * (sim.py - EAR_Y) + sim.vz * sim.pz) / dist;
+  sfx.flight(spd, dist, radialV, !sim.grounded);
   sfx.rolling(Math.hypot(sim.vx, sim.vz), sim.grounded);
 }
 
@@ -1544,7 +1556,7 @@ function frame(now) {
       result = physStep(sim, SUB, impactFx);
       state.acc -= SUB;
     }
-    if (sim.lipped && !state.lipPlayed) { state.lipPlayed = true; sfx.lipout(); }
+    if (sim.lipped && !state.lipPlayed) { state.lipPlayed = true; sfx.lipout(propDelay(sim.holeX, 0, sim.holeZ)); }
     pushTrail();
     if (state.flyTime > FLY_TIMEOUT && !result) result = 'stop';
     if (result) finish(result);
@@ -1595,7 +1607,7 @@ function frame(now) {
 
 function finish(result) {
   state.phase = PHASE.RESULT;
-  sfx.silence();   // 지속음(공기·구름) 페이드아웃
+  sfx.silence();   // 통과음·구름음 페이드아웃 (앰비언스는 유지)
   const toPin = Math.hypot(sim.px - sim.holeX, sim.pz - sim.holeZ);
   const holed = result === 'in';
   const gained = holeScore(toPin, holed);
@@ -1614,7 +1626,7 @@ function finish(result) {
     ball.position.set(sim.holeX, -BALL_VIS_R, sim.holeZ);
     sim.px = sim.holeX; sim.pz = sim.holeZ; sim.py = -BALL_VIS_R;
     fx.burst(sim.holeX, sim.holeZ);
-    sfx.holeIn();
+    sfx.holeIn(propDelay(sim.holeX, 0, sim.holeZ));
     showMsg(
       `<span class="big">🏌️ HOLE IN ONE!</span>` +
       `+${gained}점 · ${state.distance} m${shapeTxt}<br>` +
@@ -1723,7 +1735,9 @@ async function audioTest() {
       SND.ping(c, d, t + 0.12 + i * 0.11, { f, dur: 0.18, vol: 0.16, type: 'triangle' }));
   }, 0.8);
 
-  const atten20 = SND.distAtten(20), atten100 = SND.distAtten(100);
+  // 통과음 모델: 곁을 스칠 때만 들리고 20 m를 넘으면 사실상 무음이어야 한다
+  const near1 = SND.nearField(1), near20 = SND.nearField(20), near100 = SND.nearField(100);
+  const absorb1 = SND.airAbsorb(1), absorb100 = SND.airAbsorb(100);
   // 샘플 뱅크 상태 (라이브 컨텍스트 기준) — 로드 실패 시 합성 폴백이 동작해야 함
   const sampleStatus = {};
   for (const cat of Object.keys(SAMPLES)) {
@@ -1737,8 +1751,10 @@ async function audioTest() {
       noClipping: [impactFast, impactMiss, green, rough, sand, holeIn].every(r => !r.clipping),
       impactDurInRange: impactFast.durMs >= 60 && impactFast.durMs <= 120,
       centroidOrder_sand_gt_rough_gt_green: sand.centroidHz > rough.centroidHz && rough.centroidHz > green.centroidHz,
-      flightAttenRatio: +(atten20 / atten100).toFixed(1),
-      flightAttenOver10x: atten20 / atten100 >= 10,
+      passbyFadesBy20m: near20 / near1 < 0.1,          // 20 m에서 −20 dB 이하
+      passbyInaudibleAt100m: near100 * 0.32 < 0.004,   // 게이트에 걸려 완전 무음
+      highsDarkenWithDistance: absorb100 < absorb1 * 0.25,
+      propDelay130mMs: +(130 / 343 * 1000).toFixed(0),
       samplesLoaded: bank.ready && Object.values(sampleStatus).every(a => a.length > 0),
     },
   };
