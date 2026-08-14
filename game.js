@@ -3,19 +3,19 @@ import * as THREE from 'three';
 // =====================================================================
 // 오디오 샘플 출처 (모두 CC0 / Public Domain — freesound.org)
 // 각 원본에서 첫 타격/최대 피크 구간만 잘라 모노 정규화 WAV로 가공함.
-//  - assets/hit-driver.wav  "Driver 1.wav" — cheesechrisp
+//  - assets/hit-driver.m4a  "Driver 1.wav" — cheesechrisp
 //      https://freesound.org/people/cheesechrisp/sounds/620196/
-//  - assets/hit-shot.wav    "Golf shot.wav" — MioMeg
+//  - assets/hit-shot.m4a    "Golf shot.wav" — MioMeg
 //      https://freesound.org/people/MioMeg/sounds/707022/
-//  - assets/hit-owi.wav     "Golf ball getting hit OWI.wav" — Jarryd28
+//  - assets/hit-owi.m4a     "Golf ball getting hit OWI.wav" — Jarryd28
 //      https://freesound.org/people/Jarryd28/sounds/655867/
-//  - assets/cup.wav         "Golf ball in hole.wav" — Scottrex05
+//  - assets/cup.m4a         "Golf ball in hole.wav" — Scottrex05
 //      https://freesound.org/people/Scottrex05/sounds/593482/
-//  - assets/land-grass.wav  "Tennis Bounce Ball on Grass" — jamesdrake89
+//  - assets/land-grass.m4a  "Tennis Bounce Ball on Grass" — jamesdrake89
 //      https://freesound.org/people/jamesdrake89/sounds/662258/
-//  - assets/land-grass2.wav "Bouncy Ball Bouncing on Dry Grass" — NathanaelBray
+//  - assets/land-grass2.m4a "Bouncy Ball Bouncing on Dry Grass" — NathanaelBray
 //      https://freesound.org/people/NathanaelBray/sounds/650976/
-//  - assets/land-sand.wav   "Hard Impact on Sand" — Elements-Library
+//  - assets/land-sand.m4a   "Hard Impact on Sand" — Elements-Library
 //      https://freesound.org/people/Elements-Library/sounds/683788/
 // =====================================================================
 
@@ -930,11 +930,11 @@ const SND = (() => {
 
 // ---------- 샘플 뱅크 (CC0 녹음 — 트랜지언트 계열은 실녹음, 지속음은 합성 유지) ----------
 const SAMPLES = {
-  impactHard: ['assets/hit-driver.wav'],
-  impactSoft: ['assets/hit-shot.wav', 'assets/hit-owi.wav'],
-  landGrass:  ['assets/land-grass.wav', 'assets/land-grass2.wav'],
-  landSand:   ['assets/land-sand.wav'],
-  cup:        ['assets/cup.wav'],
+  impactHard: ['assets/hit-driver.m4a'],
+  impactSoft: ['assets/hit-shot.m4a', 'assets/hit-owi.m4a'],
+  landGrass:  ['assets/land-grass.m4a', 'assets/land-grass2.m4a'],
+  landSand:   ['assets/land-sand.m4a'],
+  cup:        ['assets/cup.m4a'],
 };
 const bank = { ready: false, buf: {}, rr: {} };   // rr: 카테고리별 라운드로빈 인덱스
 
