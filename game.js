@@ -68,7 +68,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815f';
+const BUILD = '0815g';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
