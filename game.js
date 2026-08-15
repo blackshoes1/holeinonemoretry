@@ -68,7 +68,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815i';
+const BUILD = '0815j';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -967,6 +967,7 @@ async function loadSamples(c) {
 // ---------- 라이브 사운드 엔진 ----------
 const sfx = (() => {
   const SPEED_OF_SOUND = 343, MAX_VOICES = 12;
+  const HIT_ONLY = true;   // 사용자 지시: 우선 타격음만 재생, 나머지 전부 무음
   let c = null, master = null, bus = null, muted = false;
   let air = null, roll = null, amb = null;
   let live = [];   // 재생 중인 원샷 게인 노드 {g, end}
@@ -1050,9 +1051,9 @@ const sfx = (() => {
       return muted;
     },
     // UI 피드백 — 전자음(구형파 삐빅) 대신 둔한 노이즈 틱. 실녹음 샘플과 이질감이 없어야 한다.
-    tap() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.02, vol: 0.05, f0: 2400, f1: 1500, q: 2 })]); },
+    tap() { if (HIT_ONLY) return; play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.02, vol: 0.05, f0: 2400, f1: 1500, q: 2 })]); },
     // 백스윙 시작 — 톱니파 대신 옷깃/공기 스치는 스윕
-    takeback() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.22, vol: 0.03, f0: 900, f1: 350, q: 0.7 })]); },
+    takeback() { if (HIT_ONLY) return; play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.22, vol: 0.03, f0: 900, f1: 350, q: 0.7 })]); },
     // 타격음 — 원본 파일을 타격 지점(2.46s)부터 무가공 재생. 게인 1, 필터 없음, 판정 없음.
     impactHit() {
       if (!bank.ready || muted) return;
@@ -1065,6 +1066,7 @@ const sfx = (() => {
     },
     // 착지음 — 노면별 실녹음 (잔디/모래), 바운스 횟수마다 감쇠·둔화 (상대 레벨 −6 dB)
     bounce(spd, surfName, idx, delay = 0) {
+      if (HIT_ONLY) return;
       const k = Math.min(spd / 18, 1) * Math.pow(0.72, idx);
       if (k < 0.04) return;
       if (bank.ready) {
@@ -1079,6 +1081,7 @@ const sfx = (() => {
     },
     // 립아웃 — 트라이앵글 핑 대신 컵 테두리를 두 번 스치는 둔탁한 틱
     lipout(delay = 0) {
+      if (HIT_ONLY) return;
       play((cc, d, t) => [
         SND.burst(cc, d, t, { dur: 0.03, vol: 0.14, f0: 1600, f1: 900, q: 1.6 }),
         SND.burst(cc, d, t + 0.07, { dur: 0.05, vol: 0.1, f0: 800, f1: 450, q: 1.2 }),
@@ -1087,6 +1090,7 @@ const sfx = (() => {
     // 홀인 — 실녹음 컵 소리 + (보상 신호로) 낮은 음량의 아르페지오 유지
     // 홀인 — 실녹음 컵 소리만. 8비트 아르페지오는 사실성을 깨서 제거 (보상감은 화면 연출이 맡는다)
     holeIn(delay = 0) {
+      if (HIT_ONLY) return;
       play((cc, d, t) => {
         if (bank.ready) return [samplePlay('cup', t, { gain: 0.95 })].filter(Boolean);
         return [SND.burst(cc, d, t, { dur: 0.12, vol: 0.2, f0: 1200, f1: 500, q: 2 })];
@@ -1098,6 +1102,7 @@ const sfx = (() => {
     // 임팩트 직후 0.3초 남짓이면 20 m를 벗어나 사실상 무음이 된다(실제 필드와 동일).
     // 프레임마다 파라미터만 갱신 (노드 생성 0). radialV > 0 = 멀어짐 → 도플러 하강.
     flight(spd, dist, radialV, on) {
+      if (HIT_ONLY) return;
       if (!c || muted) return;
       const t = c.currentTime;
       if (!on) { air.gain.gain.setTargetAtTime(0, t, 0.02); return; }
@@ -1111,6 +1116,7 @@ const sfx = (() => {
     },
     // 필드 앰비언스 — 실제 바람 세기로 구동. 비행음이 빠진 정적을 필드로 읽히게 한다.
     ambient(windSpd) {
+      if (HIT_ONLY) return;
       if (!c || muted) return;
       const t = c.currentTime;
       // 서로 어긋나는 두 주기로 세기와 음색을 함께 흔든다 — 고정된 노이즈는 바람으로 안 들린다
@@ -1120,6 +1126,7 @@ const sfx = (() => {
     },
     // 구름음
     rolling(spd, on) {
+      if (HIT_ONLY) return;
       if (!c || muted) return;
       const t = c.currentTime;
       if (!on || spd < 0.4) { roll.gain.gain.setTargetAtTime(0, t, 0.04); return; }
