@@ -68,7 +68,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815d';
+const BUILD = '0815e';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -971,17 +971,18 @@ const sfx = (() => {
   let air = null, roll = null, amb = null;
   let live = [];   // 재생 중인 원샷 게인 노드 {g, end}
 
-  // 샘플 원샷 재생: 라운드로빈 + 피치 ±4% / 게인 ±2dB 랜덤 (반복 청취 대응)
-  function samplePlay(cat, t, { gain = 1, rate = 1, lowpass = 0 } = {}) {
+  // 샘플 원샷 재생: 라운드로빈 + 피치/게인 랜덤 (반복 청취 대응)
+  // jitter 0~1: 랜덤 폭 배율. 원본과 똑같이 들려야 하는 샘플은 낮춘다.
+  function samplePlay(cat, t, { gain = 1, rate = 1, lowpass = 0, jitter = 1 } = {}) {
     const bufs = bank.buf[cat];
     if (!bufs || !bufs.length) return null;
     const i = bank.rr[cat] % bufs.length;
     bank.rr[cat]++;
     const s = c.createBufferSource();
     s.buffer = bufs[i];
-    s.playbackRate.value = rate * (0.96 + Math.random() * 0.08);
+    s.playbackRate.value = rate * (1 + (Math.random() - 0.5) * 0.08 * jitter);
     const g = c.createGain();
-    g.gain.value = gain * Math.pow(10, (Math.random() * 4 - 2) / 20);
+    g.gain.value = gain * Math.pow(10, ((Math.random() - 0.5) * 4 * jitter) / 20);
     if (lowpass) {
       const f = c.createBiquadFilter();
       f.type = 'lowpass'; f.frequency.value = lowpass;
@@ -1056,9 +1057,9 @@ const sfx = (() => {
       if (bank.ready) {
         play((cc, d, t) => {
           const out = [];
-          const rate = 0.97 + 0.08 * k;                            // 속도에 따라 음정·밝기
           const lp = pure ? 0 : 2400;                              // 미스히트는 어둡게
-          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate, lowpass: lp }));
+          // rate 1 고정 + jitter 최소 — PC에서 원본을 듣던 것과 같은 소리가 나야 한다
+          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate: 1, jitter: 0.25, lowpass: lp }));
           if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.14, f0: 500, f1: 260, q: 1.2 }));
           return out.filter(Boolean);
         });
