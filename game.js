@@ -4,12 +4,10 @@ import * as THREE from 'three';
 // 오디오 샘플 출처 (모두 CC0 / Public Domain — freesound.org)
 // 각 원본에서 트랜지언트가 파일 맨 앞(약 1.5 ms)에 오도록 잘라 모노 정규화함.
 // 앞쪽 여백이 10~40 ms 남아 있으면 타격음이 뭉개지고 화면보다 늦게 들린다.
-//  - assets/hit-driver.m4a  "Driver 1.wav" — cheesechrisp
-//      https://freesound.org/people/cheesechrisp/sounds/620196/
-//  - assets/hit-shot.m4a    "Golf shot.wav" — MioMeg
-//      https://freesound.org/people/MioMeg/sounds/707022/
-//  - assets/hit-owi.m4a     "Golf ball getting hit OWI.wav" — Jarryd28
-//      https://freesound.org/people/Jarryd28/sounds/655867/
+//  - assets/hit-hard.m4a    "golf-iron-shot-sound.wav" 2번째 타격 — 사용자 선별 (2026-08)
+//  - assets/hit-soft.m4a    "golf-iron-shot-sound.wav" 1번째 타격 — 사용자 선별 (2026-08)
+//  - assets/hit-soft2.m4a   "golf swing.mp3" — jcampbe8
+//      https://freesound.org/people/jcampbe8/sounds/638884/
 //  - assets/cup.m4a         "Golf ball in hole.wav" — Scottrex05
 //      https://freesound.org/people/Scottrex05/sounds/593482/
 //  - assets/land-grass.m4a  "Tennis Bounce Ball on Grass" — jamesdrake89
@@ -933,8 +931,8 @@ const SND = (() => {
 
 // ---------- 샘플 뱅크 (CC0 녹음 — 트랜지언트 계열은 실녹음, 지속음은 합성 유지) ----------
 const SAMPLES = {
-  impactHard: ['assets/hit-driver.m4a'],
-  impactSoft: ['assets/hit-shot.m4a', 'assets/hit-owi.m4a'],
+  impactHard: ['assets/hit-hard.m4a'],
+  impactSoft: ['assets/hit-soft.m4a', 'assets/hit-soft2.m4a'],
   landGrass:  ['assets/land-grass.m4a'],
   landSand:   ['assets/land-sand.m4a'],
   cup:        ['assets/cup.m4a'],
