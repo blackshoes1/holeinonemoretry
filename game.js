@@ -69,6 +69,9 @@ const SURF = {
 const FAIRWAY_W  = 14;
 const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
+// 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
+// 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
+const BUILD = '0815b';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -947,8 +950,9 @@ async function loadSamples(c) {
     for (const [cat, urls] of Object.entries(SAMPLES)) {
       const bufs = [];
       for (const u of urls) {
-        const ab = await (await fetch(u)).arrayBuffer();
-        bufs.push(await c.decodeAudioData(ab));
+        const res = await fetch(u + '?b=' + BUILD);
+        if (!res.ok) throw new Error(u + ' ' + res.status);   // 404 HTML을 디코드하지 않는다
+        bufs.push(await c.decodeAudioData(await res.arrayBuffer()));
       }
       bank.buf[cat] = bufs;
       bank.rr[cat] = 0;
@@ -959,6 +963,9 @@ async function loadSamples(c) {
     bank.ready = false;
   }
   bank.loading = false;
+  // 폰에서 육안 진단용: 빌드 + 현재 사운드 엔진
+  const tag = document.getElementById('build');
+  if (tag) tag.textContent = 'b' + BUILD + (bank.ready ? ' · 녹음' : ' · 합성');
 }
 
 // ---------- 라이브 사운드 엔진 ----------
@@ -1769,6 +1776,7 @@ window.__golf = {
 };
 
 document.getElementById('loading').remove();
+document.getElementById('build').textContent = 'b' + BUILD;   // 샘플 로드 후 엔진 표시가 덧붙는다
 statsCache = store.stats();
 startRound();
 requestAnimationFrame(frame);
