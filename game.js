@@ -68,7 +68,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815g';
+const BUILD = '0815h';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -1059,10 +1059,10 @@ const sfx = (() => {
       if (bank.ready) {
         play((cc, d, t) => {
           const out = [];
-          const lp = pure ? 0 : 2400;                              // 미스히트는 어둡게
-          // 원본 그대로: 음정 고정·랜덤 0·리버브 우회. PC에서 파일을 재생한 것과 같은 소리.
-          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate: 1, jitter: 0, dry: true, lowpass: lp }));
-          if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.14, f0: 500, f1: 260, q: 1.2 }));
+          // 녹음 타격은 어떤 경우에도 가공하지 않는다 — 필터를 걸면 원본과 다른 소리가 된다.
+          // 미스히트는 낮은 퍽 레이어를 "추가"하는 것으로만 표현.
+          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate: 1, jitter: 0, dry: true }));
+          if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.1, f0: 500, f1: 260, q: 1.2 }));
           return out.filter(Boolean);
         });
       } else {
@@ -1111,8 +1111,9 @@ const sfx = (() => {
       // 광대역 난류 히스: 멀어질수록 고역이 깎여 둔탁해진다
       const f = Math.min(Math.max((2200 + 22 * spd) * dop * SND.airAbsorb(dist), 300), 12000);
       air.filt.frequency.setTargetAtTime(f, t, 0.03);
-      const g = Math.min(spd * spd / 3600, 1) * SND.nearField(dist) * 0.32;
-      air.gain.gain.setTargetAtTime(g < 0.004 ? 0 : g, t, 0.03);
+      // 느린 어택(0.1s): 발사 직후 타격 샘플 위에 노이즈가 겹치지 않게 — 타격이 끝난 뒤 멀리서 스친다
+      const g = Math.min(spd * spd / 3600, 1) * SND.nearField(dist) * 0.14;
+      air.gain.gain.setTargetAtTime(g < 0.004 ? 0 : g, t, 0.1);
     },
     // 필드 앰비언스 — 실제 바람 세기로 구동. 비행음이 빠진 정적을 필드로 읽히게 한다.
     ambient(windSpd) {
