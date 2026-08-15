@@ -4,10 +4,7 @@ import * as THREE from 'three';
 // 오디오 샘플 출처 (모두 CC0 / Public Domain — freesound.org)
 // 각 원본에서 트랜지언트가 파일 맨 앞(약 1.5 ms)에 오도록 잘라 모노 정규화함.
 // 앞쪽 여백이 10~40 ms 남아 있으면 타격음이 뭉개지고 화면보다 늦게 들린다.
-//  - assets/hit-hard.m4a    "Golf Iron shot sound" 2번째 타격 — JJDG
-//      https://freesound.org/people/JJDG/sounds/441780/
-//  - assets/hit-soft.m4a    "Golf Iron shot sound" 1번째 타격 — JJDG (위와 동일)
-//  - assets/hit-soft2.m4a   "golf swing.mp3" — jcampbe8
+//  - assets/hit.m4a         "golf swing.mp3" — jcampbe8 (타격 구간만, 사용자 청음 선정)
 //      https://freesound.org/people/jcampbe8/sounds/638884/
 //  - assets/cup.m4a         "Golf ball in hole.wav" — Scottrex05
 //      https://freesound.org/people/Scottrex05/sounds/593482/
@@ -71,7 +68,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815c';
+const BUILD = '0815d';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -935,8 +932,7 @@ const SND = (() => {
 
 // ---------- 샘플 뱅크 (CC0 녹음 — 트랜지언트 계열은 실녹음, 지속음은 합성 유지) ----------
 const SAMPLES = {
-  impactHard: ['assets/hit-hard.m4a'],
-  impactSoft: ['assets/hit-soft.m4a', 'assets/hit-soft2.m4a'],
+  impact: ['assets/hit.m4a'],
   landGrass:  ['assets/land-grass.m4a'],
   landSand:   ['assets/land-sand.m4a'],
   cup:        ['assets/cup.m4a'],
@@ -1054,18 +1050,15 @@ const sfx = (() => {
     tap() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.02, vol: 0.05, f0: 2400, f1: 1500, q: 2 })]); },
     // 백스윙 시작 — 톱니파 대신 옷깃/공기 스치는 스윕
     takeback() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.22, vol: 0.03, f0: 900, f1: 350, q: 0.7 })]); },
-    // 타격음 — 벨로시티 레이어: 하드(드라이버)/소프트 샘플을 속도로 선택·크로스페이드.
-    // 볼 스피드 → 재생 속도(밝기)·게인에도 매핑. 샘플 미로드 시 합성 폴백.
+    // 타격음 — 단일 실녹음. 볼 스피드 → 재생 속도(밝기)·게인 매핑. 샘플 미로드 시 합성 폴백.
     impactHit(ballSpd, pure) {
       const k = Math.min(Math.max(ballSpd / 60, 0.2), 1);
       if (bank.ready) {
         play((cc, d, t) => {
           const out = [];
-          const xf = Math.min(Math.max((k - 0.45) / 0.2, 0), 1);   // 0=소프트, 1=하드
-          const rate = 0.97 + 0.08 * k;
+          const rate = 0.97 + 0.08 * k;                            // 속도에 따라 음정·밝기
           const lp = pure ? 0 : 2400;                              // 미스히트는 어둡게
-          if (xf > 0)  out.push(samplePlay('impactHard', t, { gain: (0.72 + 0.48 * k) * xf, rate, lowpass: lp }));
-          if (xf < 1)  out.push(samplePlay('impactSoft', t, { gain: (0.72 + 0.48 * k) * (1 - xf), rate, lowpass: lp }));
+          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate, lowpass: lp }));
           if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.14, f0: 500, f1: 260, q: 1.2 }));
           return out.filter(Boolean);
         });
