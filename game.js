@@ -68,7 +68,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815h';
+const BUILD = '0815i';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -932,7 +932,7 @@ const SND = (() => {
 
 // ---------- 샘플 뱅크 (CC0 녹음 — 트랜지언트 계열은 실녹음, 지속음은 합성 유지) ----------
 const SAMPLES = {
-  impact: ['assets/hit.m4a'],
+  impact: ['assets/hit.mp3'],   // 원본 파일 바이트 그대로 — 어떤 가공도 없음
   landGrass:  ['assets/land-grass.m4a'],
   landSand:   ['assets/land-sand.m4a'],
   cup:        ['assets/cup.m4a'],
@@ -1053,21 +1053,15 @@ const sfx = (() => {
     tap() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.02, vol: 0.05, f0: 2400, f1: 1500, q: 2 })]); },
     // 백스윙 시작 — 톱니파 대신 옷깃/공기 스치는 스윕
     takeback() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.22, vol: 0.03, f0: 900, f1: 350, q: 0.7 })]); },
-    // 타격음 — 단일 실녹음. 볼 스피드 → 재생 속도(밝기)·게인 매핑. 샘플 미로드 시 합성 폴백.
-    impactHit(ballSpd, pure) {
-      const k = Math.min(Math.max(ballSpd / 60, 0.2), 1);
-      if (bank.ready) {
-        play((cc, d, t) => {
-          const out = [];
-          // 녹음 타격은 어떤 경우에도 가공하지 않는다 — 필터를 걸면 원본과 다른 소리가 된다.
-          // 미스히트는 낮은 퍽 레이어를 "추가"하는 것으로만 표현.
-          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate: 1, jitter: 0, dry: true }));
-          if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.1, f0: 500, f1: 260, q: 1.2 }));
-          return out.filter(Boolean);
-        });
-      } else {
-        play((cc, d, t) => SND.impact(cc, d, t, ballSpd, pure));
-      }
+    // 타격음 — 원본 파일을 타격 지점(2.46s)부터 무가공 재생. 게인 1, 필터 없음, 판정 없음.
+    impactHit() {
+      if (!bank.ready || muted) return;
+      const cc = ac();
+      const buf = bank.buf.impact[0];
+      const s = cc.createBufferSource();
+      s.buffer = buf;
+      s.connect(cc.destination);   // 컴프레서·리버브·게인 전부 우회 — 스피커 직결
+      s.start(cc.currentTime + 0.005, Math.min(2.46, buf.duration));
     },
     // 착지음 — 노면별 실녹음 (잔디/모래), 바운스 횟수마다 감쇠·둔화 (상대 레벨 −6 dB)
     bounce(spd, surfName, idx, delay = 0) {
@@ -1416,7 +1410,7 @@ function shoot(tiltRad = 0) {
   arrow.visible = false;
   // 타격음은 실제 볼 스피드(m/s)로 구동 — 비행 공기음은 프레임 루프에서 지속 재생
   const ballSpd = headMphNow() * MPH * smashFactor(loftDegNow());
-  sfx.impactHit(ballSpd, state.pure !== false);
+  sfx.impactHit();
   launch(sim, headMphNow(), loftDegNow(), state.aim, tiltRad);
 }
 
