@@ -68,7 +68,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815e';
+const BUILD = '0815f';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -972,8 +972,8 @@ const sfx = (() => {
   let live = [];   // 재생 중인 원샷 게인 노드 {g, end}
 
   // 샘플 원샷 재생: 라운드로빈 + 피치/게인 랜덤 (반복 청취 대응)
-  // jitter 0~1: 랜덤 폭 배율. 원본과 똑같이 들려야 하는 샘플은 낮춘다.
-  function samplePlay(cat, t, { gain = 1, rate = 1, lowpass = 0, jitter = 1 } = {}) {
+  // jitter 0~1: 랜덤 폭 배율. dry: 리버브 버스를 우회해 원본 그대로 재생.
+  function samplePlay(cat, t, { gain = 1, rate = 1, lowpass = 0, jitter = 1, dry = false } = {}) {
     const bufs = bank.buf[cat];
     if (!bufs || !bufs.length) return null;
     const i = bank.rr[cat] % bufs.length;
@@ -983,12 +983,13 @@ const sfx = (() => {
     s.playbackRate.value = rate * (1 + (Math.random() - 0.5) * 0.08 * jitter);
     const g = c.createGain();
     g.gain.value = gain * Math.pow(10, ((Math.random() - 0.5) * 4 * jitter) / 20);
+    const dest = dry ? master : bus;
     if (lowpass) {
       const f = c.createBiquadFilter();
       f.type = 'lowpass'; f.frequency.value = lowpass;
-      s.connect(f).connect(g).connect(bus);
+      s.connect(f).connect(g).connect(dest);
     } else {
-      s.connect(g).connect(bus);
+      s.connect(g).connect(dest);
     }
     s.start(t);
     return g;
@@ -998,9 +999,10 @@ const sfx = (() => {
     if (!c) {
       c = new (window.AudioContext || window.webkitAudioContext)();
       master = c.createGain();
+      // 클리핑 안전장치 수준으로만 — 강하게 걸면 타격의 첫 수 ms 크랙이 눌려 소리가 변한다
       const comp = c.createDynamicsCompressor();
-      comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 4;
-      comp.attack.value = 0.003; comp.release.value = 0.15;
+      comp.threshold.value = -8; comp.knee.value = 10; comp.ratio.value = 2;
+      comp.attack.value = 0.001; comp.release.value = 0.12;
       master.connect(comp).connect(c.destination);
 
       // 원샷 버스: 드라이 0.85 + 컨볼루션 웨트 0.15 (야외 반사감)
@@ -1058,8 +1060,8 @@ const sfx = (() => {
         play((cc, d, t) => {
           const out = [];
           const lp = pure ? 0 : 2400;                              // 미스히트는 어둡게
-          // rate 1 고정 + jitter 최소 — PC에서 원본을 듣던 것과 같은 소리가 나야 한다
-          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate: 1, jitter: 0.25, lowpass: lp }));
+          // 원본 그대로: 음정 고정·랜덤 0·리버브 우회. PC에서 파일을 재생한 것과 같은 소리.
+          out.push(samplePlay('impact', t, { gain: 0.72 + 0.48 * k, rate: 1, jitter: 0, dry: true, lowpass: lp }));
           if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.14, f0: 500, f1: 260, q: 1.2 }));
           return out.filter(Boolean);
         });
