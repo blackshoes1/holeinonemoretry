@@ -71,7 +71,7 @@ const GREEN_R    = 16;
 const STOP_SPEED = 0.3;
 // 배포 식별자 — index.html의 game.js?b= 와 맞춰 캐시를 깨고, 화면 구석에 표시한다.
 // 값이 같으면 브라우저가 옛 코드를 실행 중인 것.
-const BUILD = '0815b';
+const BUILD = '0815c';
 const SUB        = 1 / 480;            // 고정 물리 스텝
 const SPIN_K     = Math.exp(-SUB / SPIN_TAU);
 const FLY_TIMEOUT= 12;
@@ -1050,8 +1050,10 @@ const sfx = (() => {
       if (muted) this.silence();
       return muted;
     },
-    tap() { play((cc, d, t) => [SND.ping(cc, d, t, { f: 660, dur: 0.06, vol: 0.08, type: 'square' })]); },
-    takeback() { play((cc, d, t) => [SND.ping(cc, d, t, { f: 95, dur: 0.2, vol: 0.05, type: 'sawtooth', slideTo: 70 })]); },
+    // UI 피드백 — 전자음(구형파 삐빅) 대신 둔한 노이즈 틱. 실녹음 샘플과 이질감이 없어야 한다.
+    tap() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.02, vol: 0.05, f0: 2400, f1: 1500, q: 2 })]); },
+    // 백스윙 시작 — 톱니파 대신 옷깃/공기 스치는 스윕
+    takeback() { play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.22, vol: 0.03, f0: 900, f1: 350, q: 0.7 })]); },
     // 타격음 — 벨로시티 레이어: 하드(드라이버)/소프트 샘플을 속도로 선택·크로스페이드.
     // 볼 스피드 → 재생 속도(밝기)·게인에도 매핑. 샘플 미로드 시 합성 폴백.
     impactHit(ballSpd, pure) {
@@ -1062,8 +1064,8 @@ const sfx = (() => {
           const xf = Math.min(Math.max((k - 0.45) / 0.2, 0), 1);   // 0=소프트, 1=하드
           const rate = 0.97 + 0.08 * k;
           const lp = pure ? 0 : 2400;                              // 미스히트는 어둡게
-          if (xf > 0)  out.push(samplePlay('impactHard', t, { gain: (0.55 + 0.45 * k) * xf, rate, lowpass: lp }));
-          if (xf < 1)  out.push(samplePlay('impactSoft', t, { gain: (0.55 + 0.45 * k) * (1 - xf), rate, lowpass: lp }));
+          if (xf > 0)  out.push(samplePlay('impactHard', t, { gain: (0.72 + 0.48 * k) * xf, rate, lowpass: lp }));
+          if (xf < 1)  out.push(samplePlay('impactSoft', t, { gain: (0.72 + 0.48 * k) * (1 - xf), rate, lowpass: lp }));
           if (!pure) out.push(SND.burst(cc, d, t + 0.002, { dur: 0.05, vol: 0.14, f0: 500, f1: 260, q: 1.2 }));
           return out.filter(Boolean);
         });
@@ -1085,24 +1087,22 @@ const sfx = (() => {
         play((cc, d, t) => SND.land(cc, d, t, surfName, spd, idx), delay);
       }
     },
+    // 립아웃 — 트라이앵글 핑 대신 컵 테두리를 두 번 스치는 둔탁한 틱
     lipout(delay = 0) {
       play((cc, d, t) => [
-        SND.ping(cc, d, t, { f: 880, dur: 0.05, vol: 0.14, type: 'triangle' }),
-        SND.ping(cc, d, t + 0.06, { f: 660, dur: 0.07, vol: 0.11, type: 'triangle' }),
+        SND.burst(cc, d, t, { dur: 0.03, vol: 0.14, f0: 1600, f1: 900, q: 1.6 }),
+        SND.burst(cc, d, t + 0.07, { dur: 0.05, vol: 0.1, f0: 800, f1: 450, q: 1.2 }),
       ], delay);
     },
     // 홀인 — 실녹음 컵 소리 + (보상 신호로) 낮은 음량의 아르페지오 유지
+    // 홀인 — 실녹음 컵 소리만. 8비트 아르페지오는 사실성을 깨서 제거 (보상감은 화면 연출이 맡는다)
     holeIn(delay = 0) {
       play((cc, d, t) => {
-        const out = [];
-        if (bank.ready) out.push(samplePlay('cup', t, { gain: 0.8 }));
-        else out.push(SND.burst(cc, d, t, { dur: 0.12, vol: 0.2, f0: 1200, f1: 500, q: 2 }));
-        [523, 659, 784, 1047].forEach((f, i) =>
-          out.push(SND.ping(cc, d, t + 0.3 + i * 0.11, { f, dur: 0.18, vol: 0.1, type: 'triangle' })));
-        return out.filter(Boolean);
+        if (bank.ready) return [samplePlay('cup', t, { gain: 0.95 })].filter(Boolean);
+        return [SND.burst(cc, d, t, { dur: 0.12, vol: 0.2, f0: 1200, f1: 500, q: 2 })];
       }, delay);
     },
-    miss() { play((cc, d, t) => [SND.ping(cc, d, t, { f: 220, dur: 0.15, vol: 0.07, slideTo: 180 })]); },
+    miss() {},   // 홀인 실패 전자음 제거 — 실제 필드에선 아무 소리도 나지 않는다
 
     // 통과음 — 공이 청자 곁을 스치는 동안에만 들린다.
     // 임팩트 직후 0.3초 남짓이면 20 m를 벗어나 사실상 무음이 된다(실제 필드와 동일).
@@ -1776,7 +1776,9 @@ window.__golf = {
 };
 
 document.getElementById('loading').remove();
-document.getElementById('build').textContent = 'b' + BUILD;   // 샘플 로드 후 엔진 표시가 덧붙는다
+// 샘플 로드 후 엔진 표시가 덧붙는다. 구버전 index.html(배지 없음)과 섞여도 죽지 않게 가드.
+const _buildTag = document.getElementById('build');
+if (_buildTag) _buildTag.textContent = 'b' + BUILD;
 statsCache = store.stats();
 startRound();
 requestAnimationFrame(frame);
