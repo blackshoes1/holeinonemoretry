@@ -1,0 +1,25 @@
+name: Game tests
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax
+        run: |
+          node --input-type=module --check < game.js
+          node --input-type=module --check < beta.js
+      - name: Regression tests
+        run: node --test tests/*.cjs
+# 테스트만 실행한다. 기존 Vercel Git 배포의 선행 조건으로 자동 연결되는 것은 아니다.

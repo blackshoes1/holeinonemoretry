@@ -113,10 +113,41 @@
     position: fixed; right: 8px; bottom: 6px; z-index: 30; pointer-events: none;
     font-size: 10px; color: rgba(255,255,255,.55); text-shadow: 0 1px 2px rgba(0,0,0,.4);
   }
+  #help {
+    position: fixed; right: 12px; top: max(128px, calc(env(safe-area-inset-top) + 116px));
+    border: 2px solid rgba(255,255,255,.3); border-radius: 10px; padding: 8px 12px;
+    background: rgba(27,42,30,.7); color: #fff; cursor: pointer;
+  }
+  #betaDialog {
+    margin: auto; width: min(360px, 90vw); max-height: 86dvh; overflow-y: auto; touch-action: pan-y;
+    border: 2px solid #93e26c; border-radius: 18px; padding: 22px;
+    background: #203d29; color: #fff; font-size: 15px; line-height: 1.7;
+  }
+  #betaDialog::backdrop { background: rgba(10,18,12,.7); }
+  #betaDialog h2 { font-size: 21px; margin-bottom: 12px; }
+  #betaDialog ol { padding-left: 22px; margin-bottom: 12px; }
+  #betaDialog small { display: block; opacity: .8; margin-top: 12px; }
+  #betaDialog button, #share {
+    border: 1px solid #93e26c; border-radius: 10px; padding: 10px 14px;
+    background: #31583a; color: #fff; font: inherit; cursor: pointer;
+  }
+  #betaActions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  #share { pointer-events: auto; margin-top: 10px; }
+  #betaNotice {
+    position: fixed; left: 5%; right: 5%; top: max(100px, calc(env(safe-area-inset-top) + 90px));
+    text-align: center; background: #203d29; border-radius: 8px; padding: 8px;
+    font-size: 12px; pointer-events: none; z-index: 40;
+  }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <div id="loading">코스를 준비하는 중…</div>
+<button id="help" type="button" aria-label="플레이 방법 다시 보기">? 방법</button>
+<dialog id="betaDialog" aria-labelledby="betaTitle">
+  <h2 id="betaTitle"></h2><div id="betaBody"></div><div id="betaActions"></div>
+</dialog>
+<div id="betaNotice" role="status" aria-live="polite" hidden></div>
 
 <div id="hud">
   <div class="panel" id="info"></div>

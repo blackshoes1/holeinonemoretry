@@ -1,10 +1,10 @@
 import * as THREE from 'three';
+import { createTelemetry, createProgress, tutorialSeen, saveTutorial, shareResult } from './beta.js';
 
 // =====================================================================
 // 오디오 샘플 출처 (모두 CC0 / Public Domain — freesound.org)
-// 각 원본에서 트랜지언트가 파일 맨 앞(약 1.5 ms)에 오도록 잘라 모노 정규화함.
-// 앞쪽 여백이 10~40 ms 남아 있으면 타격음이 뭉개지고 화면보다 늦게 들린다.
-//  - assets/hit.m4a         "golf swing.mp3" — jcampbe8 (타격 구간만, 사용자 청음 선정)
+// 타격음은 원본 MP3를 수정하지 않고 2.46초부터 재생한다. 다른 효과음은 비활성화 상태.
+//  - assets/hit.mp3         "golf swing.mp3" — jcampbe8 (사용자 청음 선정)
 //      https://freesound.org/people/jcampbe8/sounds/638884/
 //  - assets/cup.m4a         "Golf ball in hole.wav" — Scottrex05
 //      https://freesound.org/people/Scottrex05/sounds/593482/
@@ -317,9 +317,9 @@ function aceSweep(dist) {
 const PHASE = { AIM: 'aim', SWING: 'swing', FLY: 'fly', RESULT: 'result', ROUNDEND: 'roundend' };
 
 const C = {
-  skyTop: 0x2f9fe0, skyBottom: 0xbdeaff,
-  grassDeep: 0x3f9a4a, grassLight: 0x6fd35f, green: 0x93e26c, hill: 0x50ab55,
-  sand: 0xf2dfa8, trunk: 0x8a5a34, leaf: 0x2f8442, leafHi: 0x46a355,
+  skyTop: 0x70bce1, skyBottom: 0xc3e2ee,
+  grassDeep: 0x4b814b, grassLight: 0x83b958, green: 0xa6ca71, hill: 0x679564,
+  sand: 0xe4cf98, trunk: 0x8a5a34, leaf: 0x3d7948, leafHi: 0x629758,
   accent: 0xe8443a, white: 0xfdfdfd, outline: 0x14251a,
 };
 
@@ -334,8 +334,8 @@ scene.fog = new THREE.Fog(C.skyBottom, 150, 420);
 // near=0.1 이면 130 m 에서 10 mm — 바닥 레이어 간격과 같아 z-파이팅이 생긴다.
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 1200);
 
-scene.add(new THREE.DirectionalLight(0xfff6e2, 1.9).translateX(-60).translateY(90).translateZ(-40));
-scene.add(new THREE.HemisphereLight(0xd8f2ff, 0x4c8f42, 0.95));
+scene.add(new THREE.DirectionalLight(0xffefd4, 1.65).translateX(-60).translateY(90).translateZ(-40));
+scene.add(new THREE.HemisphereLight(0xc6e4f1, 0x4d6650, 1));
 
 const ramp = new THREE.DataTexture(
   new Uint8Array([90, 90, 90, 255, 180, 180, 180, 255, 255, 255, 255, 255]), 3, 1, THREE.RGBAFormat
@@ -401,14 +401,40 @@ for (let i = 0; i < 9; i++) {
 }
 scene.add(clouds);
 
-// 지면
+// 한 번 생성하는 잔디 질감. 별도 난수로 코스·배경 배치에 영향을 주지 않는다.
+function grassMap(width, length, grain, mowing = 0) {
+  const size = 128, pixels = new Uint8Array(size * size * 4);
+  let seed = 72319;
+  for (let y = 0; y < size; y++) {
+    const stripe = mowing * (0.5 + 0.5 * Math.cos(2 * Math.PI * y / size));
+    for (let x = 0; x < size; x++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const value = Math.round(255 - stripe - grain * (seed / 4294967296));
+      const i = (y * size + x) * 4;
+      pixels[i] = pixels[i + 1] = pixels[i + 2] = value;
+      pixels[i + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(pixels, size, size, THREE.RGBAFormat);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(width / 16, length / 16);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  texture.needsUpdate = true;
+  return texture;
+}
+
+// 지면: 예초 무늬는 텍스처로만 표현하며 충돌 높이·깊이 바이어스는 유지한다.
 const rough = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), toon(C.grassDeep));
 rough.rotation.x = -Math.PI / 2;
 scene.add(rough);
 
-const fairway = new THREE.Mesh(new THREE.PlaneGeometry(FAIRWAY_W * 2, 400), toon(C.grassLight, decal(1)));
+const fairway = new THREE.Mesh(new THREE.PlaneGeometry(FAIRWAY_W * 2, 370), toon(C.grassLight, decal(1)));
 fairway.rotation.set(-Math.PI / 2, 0, 0);
-fairway.position.set(0, 0.01, 150);
+fairway.position.set(0, 0.01, 165);
 scene.add(fairway);
 
 // 그린 — 정점 높이를 물리와 같은 greenH()로 변위 (경사 공유)
@@ -499,6 +525,11 @@ for (let i = 0; i < 24; i++) {
   trees.add(t);
 }
 scene.add(trees);
+
+// 배경 배치 후 생성: Three.js 텍스처 UUID 생성도 전역 난수를 소비한다.
+rough.material.map = grassMap(900, 900, 20);
+fairway.material.map = grassMap(FAIRWAY_W * 2, 370, 7, 22);
+green.material.map = grassMap(GREEN_R * 2, GREEN_R * 2, 5, 8);
 
 // 공 / 화살표 / 궤적
 const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_VIS_R, 20, 14), toon(C.white));
@@ -647,6 +678,7 @@ const state = {
   aces: 0,              // 이번 라운드 홀인원 수
   distance: 0,          // 현재 홀 전장 (HUD)
   seedKey: '',
+  roundId: '', lastShot: null, completedAt: null,
   bounceCount: 0,       // 이번 샷 바운스 횟수 (착지음 감쇠용)
 };
 
@@ -709,28 +741,57 @@ function holeScore(distM, holed) {
 // ---------- 기록 저장 (localStorage) ----------
 // statsCache: HUD가 매 프레임 읽으므로 라운드 종료 시에만 갱신
 let statsCache;
+function validRecord(r) {
+  if (!r || typeof r !== 'object' || typeof r.d !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(r.d)) return false;
+  const date = new Date(r.d + 'T12:00:00');
+  return Number.isFinite(date.getTime()) && dayKey(date) === r.d &&
+    r.m === monthKey(date) && r.w === weekKey(date) &&
+    Number.isInteger(r.s) && r.s >= 0 && r.s <= HOLES * ACE_SCORE &&
+    Number.isInteger(r.a) && r.a >= 0 && r.a <= HOLES;
+}
 const store = {
-  key: 'hio.rounds.v1',
-  load() {
-    try { return JSON.parse(localStorage.getItem(this.key)) || []; } catch { return []; }
+  key: 'hio.rounds.v2',
+  read() {
+    let data = null, legacy = null;
+    try { data = JSON.parse(localStorage.getItem(this.key)); } catch {}
+    if (data && data.version === 2 && Array.isArray(data.rounds)) {
+      const rounds = data.rounds.filter(validRecord);
+      const best = Number.isInteger(data.best) && data.best >= 0 && data.best <= HOLES * ACE_SCORE ? data.best : 0;
+      const total = Number.isSafeInteger(data.total) && data.total >= rounds.length ? data.total : rounds.length;
+      return { version: 2, rounds: rounds.slice(-300),
+        best: Math.max(best, ...rounds.map(r => r.s)), total };
+    }
+    try { legacy = JSON.parse(localStorage.getItem('hio.rounds.v1')); } catch {}
+    const rounds = Array.isArray(legacy) ? legacy.filter(validRecord) : [];
+    const migrated = { version: 2, rounds: rounds.slice(-300),
+      best: Math.max(0, ...rounds.map(r => r.s)), total: rounds.length };
+    // v1은 보존한다. v2 저장 후에는 재집계하지 않으며, 이미 삭제된 과거 기록은 복원할 수 없다.
+    try { localStorage.setItem(this.key, JSON.stringify(migrated)); } catch {}
+    return migrated;
   },
+  load() { return this.read().rounds; },
   add(rec) {
-    const all = this.load();
-    all.push(rec);
-    if (all.length > 300) all.splice(0, all.length - 300);
-    try { localStorage.setItem(this.key, JSON.stringify(all)); } catch {}
-    return all;
+    if (!validRecord(rec)) return false;
+    const data = this.read();
+    if (rec.id && data.rounds.some(r => r.id === rec.id)) return true;
+    data.rounds.push(rec);
+    data.rounds = data.rounds.slice(-300);
+    data.best = Math.max(data.best, rec.s);
+    data.total++;
+    try { localStorage.setItem(this.key, JSON.stringify(data)); return true; } catch { return false; }
   },
-  // 기간별 최고 점수 (일 / 주 / 월 / 전체) + 플레이 수
-  stats(all = this.load()) {
+  // 기간별 집계는 최근 300개, 역대 최고·통산 횟수는 별도 보존
+  stats() {
+    const data = this.read(), all = data.rounds;
     const dk = dayKey(), wk = weekKey(), mk = monthKey();
     const best = (rows) => rows.reduce((m, r) => Math.max(m, r.s), 0);
     const day = all.filter(r => r.d === dk);
     const week = all.filter(r => r.w === wk);
     const month = all.filter(r => r.m === mk);
     return {
-      day: best(day), week: best(week), month: best(month), all: best(all),
-      todayPlays: day.length, totalPlays: all.length,
+      day: best(day), week: best(week), month: best(month), all: data.best,
+      todayPlays: day.length, totalPlays: data.total,
       todayAces: day.reduce((n, r) => n + (r.a || 0), 0),
     };
   },
@@ -750,6 +811,9 @@ function refreshGreenMesh() {
 
 // 라운드 시작 — 오늘 날짜 시드로 9홀 생성 (같은 날은 어디서나 동일 코스)
 function startRound() {
+  if (state.roundId) telemetry.track('retry', { roundId: state.roundId });
+  state.roundId = crypto.randomUUID();
+  state.lastShot = null; state.completedAt = null;
   state.seedKey = dayKey();
   state.round = buildRound(state.seedKey);
   state.holeIdx = 0;
@@ -757,6 +821,8 @@ function startRound() {
   state.roundScore = 0;
   state.aces = 0;
   loadHole(0);
+  persistRound();
+  telemetry.track('round_start', { roundId: state.roundId, seed: state.seedKey }, 'start-' + state.roundId);
 }
 
 function loadHole(i) {
@@ -801,6 +867,119 @@ function resetShot() {
   sfx.silence();
   updateCamera(true);
 }
+
+// ---------- 베타: 안내·로컬 이벤트·체크포인트·공유 ----------
+const betaStorage = {
+  getItem: key => localStorage.getItem(key),
+  setItem: (key, value) => localStorage.setItem(key, value),
+};
+const telemetry = createTelemetry(betaStorage);
+const progress = createProgress(betaStorage, holeScore);
+const visitId = crypto.randomUUID();
+let betaBlocked = false, noticeTimer = 0;
+const betaDialog = document.getElementById('betaDialog');
+
+function betaNotice(text) {
+  const node = document.getElementById('betaNotice');
+  node.textContent = text; node.hidden = !text;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { node.hidden = true; }, 6000);
+}
+function cancelSwingInput() {
+  pDown = false; gest = null; keys.clear(); hideImpactLine();
+  if (state.phase === PHASE.SWING) state.power = state.loft = 0;
+}
+function openBetaDialog(title, body, actions) {
+  cancelSwingInput(); betaBlocked = true;
+  document.getElementById('betaTitle').textContent = title;
+  document.getElementById('betaBody').innerHTML = body;
+  const buttons = document.getElementById('betaActions');
+  buttons.replaceChildren();
+  for (const [label, action] of actions) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = label;
+    button.addEventListener('click', () => { betaDialog.close(); betaBlocked = false; action(); });
+    buttons.appendChild(button);
+  }
+  if (!betaDialog.open) betaDialog.showModal();
+}
+betaDialog.addEventListener('cancel', e => e.preventDefault());
+betaDialog.addEventListener('pointerup', e => e.stopPropagation());
+document.getElementById('help').addEventListener('pointerup', e => e.stopPropagation());
+document.getElementById('help').addEventListener('click', () => showTutorial());
+
+function showTutorial(after = () => {}) {
+  const close = outcome => {
+    if (!saveTutorial(betaStorage, outcome)) {
+      betaNotice('안내 설정 저장 실패 — 다음 방문에도 안내가 나타날 수 있습니다.');
+      telemetry.track('save_failed', { reason: 'tutorial' }, 'tutorial-save-' + visitId);
+    }
+    telemetry.track('tutorial', { outcome });
+    after();
+  };
+  openBetaDialog('9홀, 한 홀에 한 번의 샷',
+    '<ol><li>좌우로 드래그해 조준하고 탭해 준비하세요.</li>' +
+    '<li>화면 위쪽에서 시작해 아래로 당겨 백스윙하세요.</li>' +
+    '<li>위로 휘두르세요. 시작선을 지날 때 속도와 좌우 편차가 정해집니다.</li>' +
+    '<li>위로 더 올릴수록 로프트가 높아집니다. <b>손을 떼면 샷!</b></li></ol>' +
+    '<small>기록과 테스트용 이벤트는 이 브라우저에만 저장됩니다. 공식 온라인 랭킹은 아닙니다.</small>',
+    [['시작하기', () => close('done')], ['건너뛰기', () => close('skipped')]]);
+}
+function persistRound() {
+  if (!state.roundId) return false;
+  const saved = progress.save({ id: state.roundId, seed: state.seedKey, scores: state.holeScores,
+    shot: state.lastShot, completedAt: state.completedAt });
+  if (!saved) {
+    betaNotice('진행 상태 저장 실패 — 새로고침하면 이번 진행이 사라질 수 있습니다.');
+    telemetry.track('save_failed', { reason: 'progress' }, 'progress-save-' + visitId);
+  }
+  return saved;
+}
+function restoreRound(saved) {
+  state.roundId = saved.id; state.seedKey = saved.seed; state.round = buildRound(saved.seed);
+  state.holeScores = saved.scores; state.lastShot = saved.shot; state.completedAt = saved.completedAt;
+  state.roundScore = saved.scores.reduce((n, h) => n + h.score, 0);
+  state.aces = saved.scores.filter(h => h.ace).length;
+  telemetry.track('restore', { roundId: saved.id, seed: saved.seed }, 'restore-' + visitId);
+  loadHole(Math.min(saved.scores.length, HOLES - 1));
+  if (saved.scores.length === HOLES) { endRound(); return; }
+  if (saved.shot) {
+    state.power = (saved.shot.mph - HEAD_MIN) / (HEAD_MAX - HEAD_MIN);
+    state.loft = (saved.shot.loft - LOFT_MIN) / (LOFT_MAX - LOFT_MIN);
+    state.aim = saved.shot.aim;
+    state.shape = shapeName(saved.shot.tilt * 180 / Math.PI);
+    shoot(saved.shot.tilt);
+    betaNotice('중단된 샷을 같은 입력으로 처음부터 재생합니다.');
+  }
+}
+function offerResume() {
+  const saved = progress.read();
+  if (saved.status === 'missing') { startRound(); return; }
+  if (saved.status === 'ready') {
+    openBetaDialog('지난 라운드를 이어할까요?',
+      `${saved.data.seed} 코스 · ${saved.data.scores.length} / 9홀 완료<br>` +
+      '날짜가 바뀌어도 같은 코스로 이어갑니다. 중단된 샷은 처음부터 재생합니다.',
+      [['이어하기', () => { sfx.unlock(); restoreRound(saved.data); }], ['새 라운드', startRound]]);
+  } else {
+    openBetaDialog('진행 상태를 복원할 수 없습니다',
+      '저장 형식·규칙 버전이 다르거나 데이터를 읽을 수 없습니다. 기존 완료 기록은 삭제하지 않습니다.',
+      [['새 라운드', startRound]]);
+  }
+}
+async function shareRound() {
+  const result = { seed: state.seedKey, score: state.roundScore, roundId: state.roundId };
+  const button = document.getElementById('share');
+  if (button.disabled) return;
+  button.disabled = true;
+  const outcome = await shareResult(navigator, result);
+  telemetry.track('share', { roundId: result.roundId, ...outcome });
+  button.disabled = false;
+  if (outcome.outcome === 'copied') betaNotice('결과를 복사했습니다.');
+  if (outcome.outcome === 'failed') betaNotice('공유하지 못했습니다. 다시 시도해 주세요.');
+}
+addEventListener('error', () => telemetry.track('runtime_error', { reason: 'error' }, 'error-' + visitId));
+addEventListener('unhandledrejection', () => telemetry.track('runtime_error', { reason: 'rejection' }, 'rejection-' + visitId));
+document.addEventListener('visibilitychange', () => { if (document.hidden) cancelSwingInput(); });
 
 // =====================================================================
 // 사운드 합성 코어 (외부 오디오 파일 없음)
@@ -930,20 +1109,32 @@ const SND = (() => {
            nodesCreated: () => created };
 })();
 
-// ---------- 샘플 뱅크 (CC0 녹음 — 트랜지언트 계열은 실녹음, 지속음은 합성 유지) ----------
+// ---------- 샘플 뱅크 (타격음만 사용 중) ----------
+const HIT_ONLY = true;
 const SAMPLES = {
   impact: ['assets/hit.mp3'],   // 원본 파일 바이트 그대로 — 어떤 가공도 없음
   landGrass:  ['assets/land-grass.m4a'],
   landSand:   ['assets/land-sand.m4a'],
   cup:        ['assets/cup.m4a'],
 };
-const bank = { ready: false, buf: {}, rr: {} };   // rr: 카테고리별 라운드로빈 인덱스
+const bank = { ready: false, buf: {}, rr: {}, impactStatus: 'idle', attempts: 0 };
+
+function updateAudioStatus() {
+  const tag = document.getElementById('build');
+  const labels = { idle: '타격음 로딩 대기', loading: '타격음 로딩 중', ready: '타격음 준비됨', failed: '타격음 로드 실패' };
+  if (tag) tag.textContent = 'b' + BUILD + ' · ' + labels[bank.impactStatus];
+}
 
 async function loadSamples(c) {
-  if (bank.loading || bank.ready) return;
+  // 최초 요청 + 사용자 조작에 의한 재시도 2회. 자동 재시도·중복 요청 없음.
+  if (bank.loading || bank.impactStatus === 'ready' || bank.attempts >= 3) return;
   bank.loading = true;
-  try {
-    for (const [cat, urls] of Object.entries(SAMPLES)) {
+  bank.attempts++;
+  bank.impactStatus = 'loading';
+  updateAudioStatus();
+  for (const [cat, urls] of Object.entries(SAMPLES)) {
+    if (HIT_ONLY && cat !== 'impact') continue;
+    try {
       const bufs = [];
       for (const u of urls) {
         const res = await fetch(u + '?b=' + BUILD);
@@ -952,22 +1143,20 @@ async function loadSamples(c) {
       }
       bank.buf[cat] = bufs;
       bank.rr[cat] = 0;
+      if (cat === 'impact') bank.impactStatus = 'ready';
+    } catch {
+      if (cat === 'impact') bank.impactStatus = 'failed';
     }
-    bank.ready = true;
-  } catch (e) {
-    // 로드 실패(오프라인 등) → 합성 폴백 유지
-    bank.ready = false;
+    updateAudioStatus();
   }
+  bank.ready = Object.keys(SAMPLES).filter(cat => !HIT_ONLY || cat === 'impact')
+    .every(cat => bank.buf[cat]?.length > 0);
   bank.loading = false;
-  // 폰에서 육안 진단용: 빌드 + 현재 사운드 엔진
-  const tag = document.getElementById('build');
-  if (tag) tag.textContent = 'b' + BUILD + (bank.ready ? ' · 녹음' : ' · 합성');
 }
 
 // ---------- 라이브 사운드 엔진 ----------
 const sfx = (() => {
   const SPEED_OF_SOUND = 343, MAX_VOICES = 12;
-  const HIT_ONLY = true;   // 사용자 지시: 우선 타격음만 재생, 나머지 전부 무음
   let c = null, master = null, bus = null, muted = false;
   let air = null, roll = null, amb = null;
   let live = [];   // 재생 중인 원샷 게인 노드 {g, end}
@@ -1018,8 +1207,6 @@ const sfx = (() => {
       air  = SND.loopVoice(c, master, 3000, 0.3, 'lowpass');
       roll = SND.loopVoice(c, master, 400, 1.0);
       amb  = SND.loopVoice(c, master, 480, 0.2, 'lowpass');
-
-      loadSamples(c);   // 샘플은 백그라운드 로드 — 완료 전엔 합성 폴백
     }
     if (c.state === 'suspended') c.resume();
     return c;
@@ -1043,7 +1230,7 @@ const sfx = (() => {
   }
 
   return {
-    unlock() { try { ac(); } catch {} },
+    unlock() { try { loadSamples(ac()); } catch {} },
     toggle() {
       muted = !muted;
       if (c) master.gain.setTargetAtTime(muted ? 0 : 1, c.currentTime, 0.02);
@@ -1056,7 +1243,7 @@ const sfx = (() => {
     takeback() { if (HIT_ONLY) return; play((cc, d, t) => [SND.burst(cc, d, t, { dur: 0.22, vol: 0.03, f0: 900, f1: 350, q: 0.7 })]); },
     // 타격음 — 원본 파일을 타격 지점(2.46s)부터 무가공 재생. 게인 1, 필터 없음, 판정 없음.
     impactHit() {
-      if (!bank.ready || muted) return;
+      if (bank.impactStatus !== 'ready' || muted) return;
       const cc = ac();
       const buf = bank.buf.impact[0];
       const s = cc.createBufferSource();
@@ -1147,6 +1334,7 @@ const sfx = (() => {
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 const keys = new Set();
 addEventListener('keydown', (e) => {
+  if (betaBlocked || e.target?.closest?.('button, dialog')) return;
   if (e.code === 'Space') { e.preventDefault(); advance(); return; }
   if (e.code === 'KeyR') { startRound(); return; }   // ↻ 버튼과 동일 (홀 단위 재시도 없음)
   keys.add(e.code);
@@ -1154,8 +1342,8 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.code));
 
 // AIM: 드래그 = 조준, 탭 = 스윙 준비
-// SWING: 아래로 드래그 = 백스윙(파워 축적) → 위로 반전 = 다운스윙 → 시작점 재통과 = 임팩트
-//        임팩트 이후 릴리즈까지의 팔로스루 길이 = 로프트. 임팩트 이후 이동은 결과 불변.
+// SWING: 아래로 드래그 = 백스윙 → 위로 반전 = 다운스윙 → 시작점 재통과 = 속도·편차 확정
+//        시작선 통과 이후 릴리즈까지의 팔로스루 길이 = 로프트. 발사는 릴리즈 시점.
 //        백스윙 없이 그냥 위로 스와이프하면 기존 방식 (하위 호환)
 const SWIPE_FULL_V   = 3.0;   // 화면높이/초 — 하위호환 스와이프 풀파워
 const SWIPE_FULL_L   = 0.5;   // 화면높이 비율 — 하위호환 최대 로프트
@@ -1176,7 +1364,7 @@ function peakUpVel(s) { // 샘플열의 최대 상향 속도 (px/s)
 }
 
 // ---- 제스처 상태머신 (실입력·gestureTest 공용 순수 로직) ----
-// ADDRESS → (아래로 3%H) BACKSWING → (8px 위로 반전) DOWNSWING → (y0 재통과) 임팩트 → RELEASE
+// ADDRESS → BACKSWING → DOWNSWING → 시작선 통과(속도·편차 기록) → RELEASE(발사)
 function makeGesture(x, y, t) {
   return {
     x0: x, y0: y, mode: 'address', maxY: y, backLen: 0,
@@ -1185,10 +1373,22 @@ function makeGesture(x, y, t) {
     samples: [{ x, y, t }],
   };
 }
+// 최근 60ms의 평균 상향 속도. 시간 경계의 좌표를 보간해 이벤트 빈도 차이를 줄인다.
+function recentUpVel(samples, endT, endY) {
+  const startT = Math.max(samples[0].t, endT - 60);
+  for (let i = samples.length - 2; i >= 0; i--) {
+    const a = samples[i], b = samples[i + 1];
+    if (a.t <= startT && b.t > a.t) {
+      const startY = a.y + (b.y - a.y) * (startT - a.t) / (b.t - a.t);
+      return endT > startT ? Math.max(0, (startY - endY) * 1000 / (endT - startT)) : 0;
+    }
+  }
+  return 0;
+}
 function gestureMove(g, x, y, t) {
+  if (t <= g.prevT) return;
+  const prev = g.samples[g.samples.length - 1];
   g.samples.push({ x, y, t });
-  const dt = (t - g.prevT) / 1000;
-  const vUp = dt > 1e-4 ? (g.prevY - y) / dt : 0;
   if (g.mode !== 'down') {
     if (y > g.maxY) {
       g.maxY = y;
@@ -1199,9 +1399,13 @@ function gestureMove(g, x, y, t) {
     }
   }
   if (g.mode === 'down') {
-    g.downV = Math.max(g.downV, vUp);
-    if (!g.impacted && y <= g.y0) { // 시작점 재통과 = 임팩트
-      g.impacted = true; g.impactX = x; g.impactV = g.downV;
+    g.downV = recentUpVel(g.samples, t, y);
+    if (!g.impacted && y <= g.y0) { // 시작선에서 속도·편차 확정, 실제 발사는 릴리즈
+      const alpha = (g.prevY - g.y0) / (g.prevY - y);
+      const impactT = g.prevT + (t - g.prevT) * alpha;
+      g.impacted = true;
+      g.impactX = prev.x + (x - prev.x) * alpha;
+      g.impactV = recentUpVel(g.samples, impactT, g.y0);
     }
     if (g.impacted) g.minYAfter = Math.min(g.minYAfter, y);
   }
@@ -1263,12 +1467,21 @@ function gestureTest() {
     for (let i = 1; i <= 5; i++) s.push({ x: x0 + W * (sideW || 0), y: y0 - H * followH * i / 5, t: t += 20 });
     return s;
   }
-  return {
+  const results = {
     fullPure:  run(seq(0.45, 160, 0.30, 0)),    // 풀백스윙 + 빠른 다운스윙 정타 → 최대급 mph, tilt 0
     halfBack:  run(seq(0.20, 200, 0.20, 0)),    // 하프 백스윙 → 중간 mph
     hardSlice: run(seq(0.40, 160, 0.25, 0.2)),  // 심한 우편차 → tilt ≈ −14°
     aceSweep130: aceSweep(130),                 // launch() 직접 호출 경로 불변 확인
   };
+  const expected = {
+    fullPure: { mph: [97, 98], loftDeg: [44, 45], tiltDeg: [0, 0] },
+    halfBack: { mph: [65, 67], loftDeg: [32, 34], tiltDeg: [0, 0] },
+    hardSlice: { mph: [93, 95], loftDeg: [38, 40], tiltDeg: [-15, -13] },
+  };
+  const checks = Object.fromEntries(Object.entries(expected).map(([name, ranges]) => [name,
+    !!results[name] && Object.entries(ranges).every(([key, [min, max]]) =>
+      Number.isFinite(results[name][key]) && results[name][key] >= min && results[name][key] <= max)]));
+  return { ...results, expected, checks, pass: Object.values(checks).every(Boolean) };
 }
 
 // ---- 임팩트 존 HUD ----
@@ -1309,16 +1522,18 @@ function fireShot(r) {
 }
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (betaBlocked) return;
   e.preventDefault();
   sfx.unlock();
   pDown = true; pStartX = pLastX = e.clientX; pStartY = e.clientY; pMoved = 0;
   if (state.phase === PHASE.SWING) {
     gest = makeGesture(e.clientX, e.clientY, performance.now());
-    gest.creaked = gest.hitPlayed = false;
+    gest.creaked = false;
     showImpactLine(e.clientX, e.clientY);
   }
 });
 addEventListener('pointermove', (e) => {
+  if (betaBlocked) return;
   if (!pDown) return;
   pMoved = Math.max(pMoved, Math.hypot(e.clientX - pStartX, e.clientY - pStartY));
   if (state.phase === PHASE.AIM) {
@@ -1327,10 +1542,6 @@ addEventListener('pointermove', (e) => {
   } else if (state.phase === PHASE.SWING && gest) {
     gestureMove(gest, e.clientX, e.clientY, performance.now());
     if (gest.mode === 'back' && !gest.creaked) { gest.creaked = true; sfx.takeback(); }
-    if (gest.impacted && !gest.hitPlayed) {
-      gest.hitPlayed = true;
-      flashImpact(Math.min(Math.max((gest.impactX - gest.x0) / (innerWidth * 0.22), -1), 1));
-    }
     // 라이브 프리뷰 (바에 표시)
     if (gest.impacted) {
       state.loft = Math.min(Math.max((gest.y0 - Math.min(gest.minYAfter, e.clientY)) / (innerHeight * FOLLOW_FULL_L), 0), 1);
@@ -1347,18 +1558,19 @@ addEventListener('pointermove', (e) => {
   }
 });
 addEventListener('pointerup', () => {
+  if (betaBlocked) return;
   if (!pDown) return;
   pDown = false;
   if (state.phase === PHASE.SWING && gest) {
     const r = gestureEnd(gest);
     gest = null;
     hideImpactLine();
-    if (r) { fireShot(r); return; }
+    if (r) { flashImpact(r.devN); fireShot(r); return; }
     state.power = state.loft = 0; // 무효 제스처 → 프리뷰 리셋
   }
   if (pMoved < 8) advance(); // 탭
 });
-addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+addEventListener('touchmove', (e) => { if (!betaBlocked) e.preventDefault(); }, { passive: false });
 // ↻ = 라운드 처음부터 (홀당 1샷이므로 홀 단위 재시도는 없음)
 document.getElementById('retry').addEventListener('pointerup', (e) => {
   e.stopPropagation();
@@ -1400,6 +1612,7 @@ recordsEl.addEventListener('pointerup', (e) => {
 });
 
 function advance() {
+  if (betaBlocked) return;
   switch (state.phase) {
     case PHASE.AIM:      state.phase = PHASE.SWING; sfx.tap(); break;
     case PHASE.RESULT:   sfx.tap(); nextHole(); break;
@@ -1415,8 +1628,10 @@ function shoot(tiltRad = 0) {
   state.flyTime = 0; state.acc = 0;
   state.bounceCount = 0;
   arrow.visible = false;
-  // 타격음은 실제 볼 스피드(m/s)로 구동 — 비행 공기음은 프레임 루프에서 지속 재생
-  const ballSpd = headMphNow() * MPH * smashFactor(loftDegNow());
+  state.lastShot = { mph: headMphNow(), loft: loftDegNow(), aim: state.aim, tilt: tiltRad };
+  persistRound();
+  telemetry.track('first_shot', { roundId: state.roundId, seed: state.seedKey }, 'shot-' + state.roundId);
+  // 원본 타격음만 재생한다. 속도·정타 여부에 따른 음색 변화 없음.
   sfx.impactHit();
   launch(sim, headMphNow(), loftDegNow(), state.aim, tiltRad);
 }
@@ -1508,7 +1723,7 @@ function updateHud() {
 
   const prompts = {
     [PHASE.AIM]: `드래그로 조준 · ${ACT}하면 스윙 준비`,
-    [PHASE.SWING]: '아래로 당겨 백스윙 → 위로 휘두르기!',
+    [PHASE.SWING]: '아래로 당긴 뒤 위로 · 손을 떼면 샷!',
     [PHASE.FLY]: '…',
     [PHASE.RESULT]: `${ACT}으로 계속`,
     [PHASE.ROUNDEND]: `${ACT}으로 새 라운드`,
@@ -1553,7 +1768,7 @@ function frame(now) {
     if (right) state.aim += 0.9 * dt;
     arrow.position.set(sim.px, 0.1, sim.pz);
     arrow.rotation.y = state.aim;
-  } else if (state.phase === PHASE.FLY) {
+  } else if (state.phase === PHASE.FLY && !betaBlocked) {
     state.flyTime += dt;
     state.acc += dt;
     let result = null;
@@ -1623,6 +1838,13 @@ function finish(result) {
   // 홀별 점수의 합으로 재계산 — 같은 홀을 다시 쳐도 중복 적립되지 않음
   state.roundScore = state.holeScores.reduce((n, h) => n + (h ? h.score : 0), 0);
   state.aces = state.holeScores.reduce((n, h) => n + (h && h.ace ? 1 : 0), 0);
+  state.lastShot = null;
+  if (state.holeIdx === HOLES - 1 && !state.completedAt) state.completedAt = new Date().toISOString();
+  persistRound();
+  telemetry.track('hole_complete', { roundId: state.roundId, hole: state.holeIdx + 1, score: gained },
+    `hole-${state.roundId}-${state.holeIdx}`);
+  if (state.holeIdx === HOLES - 1) telemetry.track('round_complete',
+    { roundId: state.roundId, seed: state.seedKey, score: state.roundScore }, 'complete-' + state.roundId);
 
   const last = state.holeIdx + 1 === HOLES;
   const nextLabel = last ? '라운드 결과 보기' : `${state.holeIdx + 2}번 홀`;
@@ -1655,8 +1877,9 @@ function finish(result) {
 function endRound() {
   state.phase = PHASE.ROUNDEND;
   const prev = statsCache;
-  const now = new Date();
-  store.add({ d: dayKey(now), w: weekKey(now), m: monthKey(now), s: state.roundScore, a: state.aces });
+  const now = new Date(state.completedAt || Date.now());
+  const saved = store.add({ id: state.roundId, d: dayKey(now), w: weekKey(now), m: monthKey(now), s: state.roundScore, a: state.aces });
+  if (!saved) telemetry.track('save_failed', { reason: 'record' }, 'record-save-' + visitId);
   statsCache = store.stats();
 
   const rows = state.holeScores.map((h, i) =>
@@ -1673,11 +1896,15 @@ function endRound() {
     `<span class="big">${state.roundScore}점</span>` +
     badge +
     `9홀 완주 · 홀인원 ${state.aces}개<br>` +
+    (saved ? '' : '<div style="color:#ffd23f">기록 저장 실패 — 이번 결과는 저장되지 않았습니다.</div>') +
     `<table class="sum">${rows}</table>` +
     `<div style="font-size:12px;opacity:.75;margin-top:8px">` +
     `오늘 최고 ${statsCache.day} · 이번 주 ${statsCache.week} · 이번 달 ${statsCache.month}</div>` +
+    `<button id="share" type="button">결과 공유</button><br>` +
     `<span class="hint">${ACT} — 새 라운드</span>`
   );
+  document.getElementById('share').addEventListener('pointerup', e => e.stopPropagation());
+  document.getElementById('share').addEventListener('click', shareRound);
 }
 
 addEventListener('resize', () => {
@@ -1744,24 +1971,29 @@ async function audioTest() {
   // 통과음 모델: 곁을 스칠 때만 들리고 20 m를 넘으면 사실상 무음이어야 한다
   const near1 = SND.nearField(1), near20 = SND.nearField(20), near100 = SND.nearField(100);
   const absorb1 = SND.airAbsorb(1), absorb100 = SND.airAbsorb(100);
-  // 샘플 뱅크 상태 (라이브 컨텍스트 기준) — 로드 실패 시 합성 폴백이 동작해야 함
+  // 녹음 파일은 로딩 메타데이터만 확인한다. 실제 impactHit 경로는 회귀 테스트에서 별도로 검증.
   const sampleStatus = {};
   for (const cat of Object.keys(SAMPLES)) {
     const bufs = bank.buf[cat] || [];
     sampleStatus[cat] = bufs.map(b => ({ durMs: Math.round(b.duration * 1000), ch: b.numberOfChannels, sr: b.sampleRate }));
   }
   return {
-    impactFast, impactMiss, green, rough, sand, holeIn,
-    samples: { ready: bank.ready, status: sampleStatus },
-    checks: {
-      noClipping: [impactFast, impactMiss, green, rough, sand, holeIn].every(r => !r.clipping),
-      impactDurInRange: impactFast.durMs >= 60 && impactFast.durMs <= 120,
-      centroidOrder_sand_gt_rough_gt_green: sand.centroidHz > rough.centroidHz && rough.centroidHz > green.centroidHz,
-      passbyFadesBy20m: near20 / near1 < 0.1,          // 20 m에서 −20 dB 이하
-      passbyInaudibleAt100m: near100 * 0.32 < 0.004,   // 게이트에 걸려 완전 무음
-      highsDarkenWithDistance: absorb100 < absorb1 * 0.25,
-      propDelay130mMs: +(130 / 343 * 1000).toFixed(0),
-      samplesLoaded: bank.ready && Object.values(sampleStatus).every(a => a.length > 0),
+    synthesis: {
+      note: '현재 게임에서 비활성화된 합성음 검사. 녹음 타격음의 음질 검증이 아님.',
+      impactFast, impactMiss, green, rough, sand, holeIn,
+      checks: {
+        noClipping: [impactFast, impactMiss, green, rough, sand, holeIn].every(r => !r.clipping),
+        impactDurInRange: impactFast.durMs >= 60 && impactFast.durMs <= 120,
+        centroidOrder_sand_gt_rough_gt_green: sand.centroidHz > rough.centroidHz && rough.centroidHz > green.centroidHz,
+        passbyFadesBy20m: near20 / near1 < 0.1,
+        passbyInaudibleAt100m: near100 * 0.32 < 0.004,
+        highsDarkenWithDistance: absorb100 < absorb1 * 0.25,
+        propDelay130mMs: +(130 / 343 * 1000).toFixed(0),
+      },
+    },
+    recorded: {
+      note: '로딩 메타데이터만 검사. 청감 일치·실제 출력은 이 함수에서 검증하지 않음.',
+      impactReady: bank.impactStatus === 'ready', status: sampleStatus,
     },
   };
 }
@@ -1771,12 +2003,18 @@ window.__golf = {
   bench, aceSweep, benchCarry, gestureTest, audioTest, makeSim, launch, physStep,
   buildRound, holeScore, store, dayKey, weekKey, monthKey, state, sim, SND, sfx, bank,
   SUB, HEAD_MIN, HEAD_MAX, LOFT_MIN, LOFT_MAX, HOLES, DIST_MIN, DIST_MAX,
+  telemetry, progress,
+  graphicsStats: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
+    textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries,
+    viewport: [innerWidth, innerHeight], pixelRatio: renderer.getPixelRatio(), camera: camera.position.toArray() }),
 };
 
 document.getElementById('loading').remove();
-// 샘플 로드 후 엔진 표시가 덧붙는다. 구버전 index.html(배지 없음)과 섞여도 죽지 않게 가드.
-const _buildTag = document.getElementById('build');
-if (_buildTag) _buildTag.textContent = 'b' + BUILD;
+updateAudioStatus();
 statsCache = store.stats();
-startRound();
+// 복원 여부를 결정하기 전에는 저장 상태를 덮어쓰거나 새 라운드를 집계하지 않는다.
+state.seedKey = dayKey(); state.round = buildRound(state.seedKey); loadHole(0);
+telemetry.track('visit', {}, 'visit-' + visitId);
+if (tutorialSeen(betaStorage)) offerResume();
+else showTutorial(offerResume);
 requestAnimationFrame(frame);
